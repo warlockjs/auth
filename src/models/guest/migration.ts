@@ -1,4 +1,4 @@
-import { migrationOffice } from "src/cascade";
+import { migrationOffice } from "@warlock.js/cascade";
 import { Guest } from "./guest";
 
 export default migrationOffice.register({
