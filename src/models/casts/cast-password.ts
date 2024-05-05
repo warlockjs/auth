@@ -1,3 +1,4 @@
+import config from "@mongez/config";
 import Password from "@mongez/password";
 import type { Model } from "@warlock.js/cascade";
 
@@ -7,6 +8,6 @@ import type { Model } from "@warlock.js/cascade";
  */
 export function castPassword(value: any, column: string, model: Model) {
   return value
-    ? Password.generate(String(value), 12)
+    ? Password.generate(String(value), config.get("auth.password.salt", 12))
     : model.getInitial(column);
 }

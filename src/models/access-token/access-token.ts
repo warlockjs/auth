@@ -6,5 +6,3 @@ export class AccessToken extends Model {
    */
   public static collection = "accessTokens";
 }
-
-export const AccessTokenBlueprint = AccessToken.blueprint();

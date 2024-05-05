@@ -1,11 +1,13 @@
-import { AccessTokenBlueprint } from "./access-token";
+import { migrationOffice } from "src/cascade";
+import { AccessToken } from "./access-token";
 
-export async function accessTokenMigration() {
-  AccessTokenBlueprint.unique("token");
-}
-
-accessTokenMigration.down = async () => {
-  AccessTokenBlueprint.dropUniqueIndex("token");
-};
-
-accessTokenMigration.blueprint = AccessTokenBlueprint;
+export default migrationOffice.register({
+  name: "accessToken",
+  blueprint: AccessToken.blueprint(),
+  up: blueprint => {
+    blueprint.index("token");
+  },
+  down: blueprint => {
+    blueprint.dropUniqueIndex("token");
+  },
+});

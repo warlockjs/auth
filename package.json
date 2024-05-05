@@ -1,6 +1,6 @@
 {
     "name": "@warlock.js/auth",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Authentication system for Warlock.js applications",
     "main": "src/index.ts",
     "dependencies": {
