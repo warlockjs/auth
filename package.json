@@ -1,0 +1,31 @@
+{
+  "name": "@warlock.js/auth",
+  "version": "1.0.0",
+  "description": "Authentication system for Warlock.js applications",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@mongez/password": "^1.0.2",
+    "fast-jwt": "^4.0.1"
+  },
+  "peerDependencies": {
+    "@mongez/fs": "^3.0.4",
+    "@warlock.js/cascade": "^1.0.0",
+    "@warlock.js/logger": "^1.0.0",
+    "@mongez/reinforcements": "^2.3.9",
+    "@mongez/supportive-is": "^2.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/warlockjs/auth"
+  },
+  "keywords": [
+    "nodejs",
+    "auth",
+    "auth.js",
+    "authentication",
+    "authorization",
+    "jwt"
+  ],
+  "author": "hassanzohdy",
+  "license": "MIT"
+}
