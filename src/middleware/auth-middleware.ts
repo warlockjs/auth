@@ -9,6 +9,8 @@ export function authMiddleware(allowedUserType?: string) {
     try {
       const authorizationValue = request.authorizationValue;
 
+      if (! allowedUserType && ! authorizationValue) return;
+
       if (!authorizationValue) {
         return response.unauthorized({
           error: "Unauthorized: Access Token is missing",
@@ -73,11 +75,11 @@ export function authMiddleware(allowedUserType?: string) {
   if (allowedUserType) {
     const userAccessTokenKey = `${allowedUserType}AccessToken`;
     const userAccessTokenKeyNameHeader = `${allowedUserType}AccessTokenHeader`;
-    (auth as any).postman = {
-      onCollectingVariables(variables: any) {
+    auth.postman = {
+      onCollectingVariables(variables) {
         if (
           variables.find(
-            (variable: any) => variable.key === userAccessTokenKeyNameHeader,
+            variable => variable.key === userAccessTokenKeyNameHeader,
           )
         )
           return;
@@ -92,7 +94,7 @@ export function authMiddleware(allowedUserType?: string) {
           value: `Bearer {{${userAccessTokenKey}}}`,
         });
       },
-      onAddingRequest({ request }: any) {
+      onAddingRequest({ request }) {
         request.header.push({
           key: "Authorization",
           value: `{{${userAccessTokenKeyNameHeader}}}`,
