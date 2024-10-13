@@ -1,6 +1,6 @@
 {
     "name": "@warlock.js/auth",
-    "version": "2.0.1",
+    "version": "2.0.3",
     "description": "Authentication system for Warlock.js applications",
     "main": "src/index.ts",
     "dependencies": {
@@ -9,8 +9,8 @@
     },
     "peerDependencies": {
         "@mongez/fs": "^3.0.4",
-        "@warlock.js/cascade": "2.0.1",
-        "@warlock.js/logger": "2.0.1",
+        "@warlock.js/cascade": "2.0.3",
+        "@warlock.js/logger": "2.0.3",
         "@mongez/reinforcements": "^2.3.9",
         "@mongez/supportive-is": "^2.0.3"
     },
