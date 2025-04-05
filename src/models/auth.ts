@@ -13,16 +13,18 @@ export abstract class Auth extends Model {
   /**
    * Generate jwt token
    */
-  public async generateAccessToken(): Promise<string> {
+  public async generateAccessToken(data?: any): Promise<string> {
     // store the main data in the data object
     // we need to store the user data in an object
     // that we'll sue to generate the token
     // and also it will be saved in the Access Token model under `user` column
-    const data = {
-      ...this.only(["id", "_id"]),
-      userType: this.userType,
-      createdAt: Date.now(),
-    };
+    if (!data) {
+      data = {
+        ...this.only(["id", "_id"]),
+        userType: this.userType,
+        createdAt: Date.now(),
+      };
+    }
 
     // use our own jwt generator to generate a token for the guest
     const token = await jwt.generate(data);
