@@ -1,4 +1,4 @@
-import config from "@mongez/config";
+import { config } from "@warlock.js/core";
 import {
   createSigner,
   createVerifier,
@@ -7,14 +7,12 @@ import {
   type VerifierOptions,
 } from "fast-jwt";
 
-const getSecretKey = () => config.get("auth.jwt.secret") as string;
-const getAlgorithm = () => config.get("auth.jwt.algorithm") as Algorithm;
+const getSecretKey = () => config.key("auth.jwt.secret") as string;
+const getAlgorithm = () => config.key("auth.jwt.algorithm") as Algorithm;
 
-const getRefreshSecretKey = () =>
-  config.get("auth.jwt.refresh.secret") as string;
+const getRefreshSecretKey = () => config.key("auth.jwt.refresh.secret") as string;
 // Assuming there's a separate config for refresh token validity, for example, '7d' for 7 days
-const getRefreshTokenValidity = () =>
-  config.get("auth.jwt.refresh.expiresIn") as number | string;
+const getRefreshTokenValidity = () => config.key("auth.jwt.refresh.expiresIn") as number | string;
 
 export const jwt = {
   /**
@@ -40,14 +38,14 @@ export const jwt = {
    * @param token The JWT token to verify.
    * @returns The decoded token payload if verification is successful.
    */
-  async verify(
+  async verify<T = any>(
     token: string,
     {
       key = getSecretKey(),
       algorithms = getAlgorithm() ? [getAlgorithm()] : undefined,
       ...options
     }: VerifierOptions & { key?: string } = {},
-  ) {
+  ): Promise<T> {
     const verify = createVerifier({ key, ...options, algorithms });
 
     return await verify(token as string);
@@ -72,14 +70,14 @@ export const jwt = {
   /**
    * Verify the given refresh token.
    */
-  async verifyRefreshToken(
+  async verifyRefreshToken<T = any>(
     token: string,
     {
       key = getRefreshSecretKey(),
       algorithms = [getAlgorithm()],
       ...options
     }: VerifierOptions & { key?: string } = {},
-  ) {
+  ): Promise<T> {
     const verify = createVerifier({ key, algorithms, ...options });
     return await verify(token);
   },

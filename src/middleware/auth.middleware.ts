@@ -1,8 +1,8 @@
-import config from "@mongez/config";
-import type { Middleware, Request, Response } from "@warlock.js/core";
+import { config, t, type Middleware, type Request, type Response } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
 import { AccessToken } from "../models/access-token";
 import { jwt } from "../services/jwt";
+import { AuthErrorCodes } from "../utils/auth-error-codes";
 
 export function authMiddleware(allowedUserType?: string | string[]) {
   const allowedTypes = !allowedUserType
@@ -19,14 +19,16 @@ export function authMiddleware(allowedUserType?: string | string[]) {
 
       if (!authorizationValue) {
         return response.unauthorized({
-          // TODO: translate this message
-          error: "Unauthorized: Access Token is missing",
+          error: t("auth.errors.missingAccessToken"),
+          errorCode: AuthErrorCodes.MissingAccessToken,
         });
       }
 
       // get current user jwt
       const user = await jwt.verify(authorizationValue);
 
+      // store decoded access token object in request object
+      request.decodedAccessToken = user;
       // use our own jwt verify to verify the token
       const accessToken = await AccessToken.first({
         token: authorizationValue,
@@ -34,8 +36,8 @@ export function authMiddleware(allowedUserType?: string | string[]) {
 
       if (!accessToken) {
         return response.unauthorized({
-          // TODO: translate this message
-          error: "Unauthorized: Invalid Access Token",
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
         });
       }
 
@@ -45,16 +47,15 @@ export function authMiddleware(allowedUserType?: string | string[]) {
       // check if the user type is allowed
       if (allowedTypes.length && !allowedTypes.includes(userType)) {
         return response.unauthorized({
-          // TODO: translate this message
-          error: "You are not allowed to access this resource",
+          error: t("auth.errors.unauthorized"),
+          errorCode: AuthErrorCodes.Unauthorized,
         });
       }
 
       // get user model class
-      const UserModel = config.get(`auth.userType.${userType}`);
+      const UserModel = config.key(`auth.userType.${userType}`);
 
       if (!UserModel) {
-        // TODO: translate this message
         throw new Error(`User type ${userType} is unknown type.`);
       }
 
@@ -64,8 +65,8 @@ export function authMiddleware(allowedUserType?: string | string[]) {
       if (!currentUser) {
         accessToken.destroy();
         return response.unauthorized({
-          // TODO: translate this message
-          error: "Unauthorized: Invalid Access Token",
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
         });
       }
 
@@ -83,42 +84,11 @@ export function authMiddleware(allowedUserType?: string | string[]) {
       request.clearCurrentUser();
 
       return response.unauthorized({
-        // TODO: translate this message
-        error: "Unauthorized: Invalid Access Token",
+        error: t("auth.errors.invalidAccessToken"),
+        errorCode: AuthErrorCodes.InvalidAccessToken,
       });
     }
   };
-
-  if (allowedUserType) {
-    const userAccessTokenKey = `${allowedUserType}AccessToken`;
-    const userAccessTokenKeyNameHeader = `${allowedUserType}AccessTokenHeader`;
-    auth.postman = {
-      onCollectingVariables(variables) {
-        if (
-          variables.find(
-            variable => variable.key === userAccessTokenKeyNameHeader,
-          )
-        )
-          return;
-
-        variables.push({
-          key: userAccessTokenKey,
-          value: "YOUR_TOKEN_HERE",
-        });
-
-        variables.push({
-          key: userAccessTokenKeyNameHeader,
-          value: `Bearer {{${userAccessTokenKey}}}`,
-        });
-      },
-      onAddingRequest({ request }) {
-        request.header.push({
-          key: "Authorization",
-          value: `{{${userAccessTokenKeyNameHeader}}}`,
-        });
-      },
-    };
-  }
 
   return auth;
 }
