@@ -15,6 +15,7 @@ export type AuthEventPayloads = {
   // Logout events
   logout: [user: Auth];
   "logout.all": [user: Auth];
+  "logout.failsafe": [user: Auth];
 
   // Token events
   "token.created": [user: Auth, tokenPair: TokenPair];

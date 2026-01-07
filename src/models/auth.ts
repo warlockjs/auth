@@ -1,10 +1,9 @@
-import type { ChildModel } from "@warlock.js/cascade";
-import { Model } from "@warlock.js/cascade";
+import { type ChildModel, Model, type ModelSchema } from "@warlock.js/cascade";
 import type { DeviceInfo, TokenPair } from "../contracts/types";
 import { authService } from "../services";
 import type { RefreshToken } from "./refresh-token/refresh-token";
 
-export abstract class Auth extends Model {
+export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Model<Schema> {
   /**
    * Get user type
    */
@@ -14,8 +13,6 @@ export abstract class Auth extends Model {
    * Get access token payload
    */
   public accessTokenPayload() {
-    // Dynamically import to avoid circular dependency
-    const { authService } = require("../services/auth.service");
     return authService.buildAccessTokenPayload(this);
   }
 
@@ -64,7 +61,7 @@ export abstract class Auth extends Model {
   /**
    * Attempt to login the user
    */
-  public static async attempt<T>(this: ChildModel<T>, data: any): Promise<T | null> {
+  public static async attempt(this: ChildModel<Auth>, data: any): Promise<Auth | null> {
     return authService.attemptLogin(this, data);
   }
 
@@ -72,6 +69,6 @@ export abstract class Auth extends Model {
    * Confirm password
    */
   public confirmPassword(password: string): boolean {
-    return authService.verifyPassword(this.get("password"), password);
+    return authService.verifyPassword(this.string("password")!, password);
   }
 }

@@ -1,13 +1,13 @@
-import { migrationOffice } from "@warlock.js/cascade";
+import { migrate } from "@warlock.js/cascade";
 import { AccessToken } from "./access-token";
 
-export default migrationOffice.register({
+export default migrate(AccessToken, {
   name: "accessToken",
-  blueprint: AccessToken.blueprint(),
-  up: blueprint => {
-    blueprint.index("token");
+  up() {
+    this.string("accessToken").index();
+    this.date("lastAccess");
   },
-  down: blueprint => {
-    blueprint.dropUniqueIndex("token");
+  down() {
+    this.dropIndex("token");
   },
 });

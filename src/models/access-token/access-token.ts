@@ -1,19 +1,23 @@
-import { Model, type Casts } from "@warlock.js/cascade";
+import { Model } from "@warlock.js/cascade";
+import { v } from "@warlock.js/seal";
+
+const accessTokenSchema = v.object({
+  token: v.string().required(),
+  lastAccess: v.date().default(() => new Date()),
+  user: v
+    .object({
+      id: v.number().required(),
+      userType: v.string(),
+    })
+    .allowUnknown()
+    .required(),
+});
 
 export class AccessToken extends Model {
   /**
    * {@inheritDoc}
    */
-  public static collection = "accessTokens";
+  public static table = "accessTokens";
 
-  /**
-   * {@inheritDoc}
-   */
-  protected casts: Casts = {
-    lastAccess: "date",
-    token: "string",
-    "user.id": "int",
-    "user._id": "string",
-    "user.userType": "string",
-  };
+  public static schema = accessTokenSchema;
 }

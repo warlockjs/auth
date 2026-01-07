@@ -71,9 +71,8 @@ export function authMiddleware(allowedUserType?: string | string[]) {
       }
 
       // update last access
-      accessToken.silentSaving({
-        lastAccess: new Date(),
-      });
+      accessToken.set("lastAccess", new Date());
+      await accessToken.save({ skipEvents: true });
 
       // set current user
       request.user = currentUser;

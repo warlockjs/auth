@@ -1,4 +1,4 @@
-import { verify } from "@mongez/password";
+import { hash, verify } from "@mongez/password";
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
 import { config } from "@warlock.js/core";
@@ -17,7 +17,7 @@ class AuthService {
   public buildAccessTokenPayload(user: Auth) {
     return {
       id: user.id,
-      _id: user._id,
+      _id: user.get("_id"),
       userType: user.userType,
       createdAt: Date.now(),
     };
@@ -34,8 +34,8 @@ class AuthService {
     // If expiresIn is undefined, token never expires
     const token = expiresIn ? await jwt.generate(data, { expiresIn }) : await jwt.generate(data);
 
-    // Store in database (fire and forget)
-    AccessToken.create({
+    // Store in database
+    await AccessToken.create({
       token,
       user: data,
     });
@@ -88,7 +88,7 @@ class AuthService {
    * Create both access and refresh tokens
    */
   public async createTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
-    const accessToken = await this.generateAccessToken(user);
+    const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
     const refreshToken = await this.createRefreshToken(user, deviceInfo);
 
     const tokenPair: TokenPair = {
@@ -170,42 +170,55 @@ class AuthService {
   }
 
   /**
+   * Hash password
+   */
+  public hashPassword(password: string): string {
+    return hash(String(password), config.key("auth.password.salt", 12));
+  }
+
+  /**
    * Attempt to login user with given credentials
    */
-  public async attemptLogin<T>(Model: ChildModel<T>, data: any): Promise<T | null> {
+  public async attemptLogin(Model: ChildModel<Auth>, data: any): Promise<Auth | null> {
     const { password, ...otherData } = data;
 
     // Emit login attempt event
     authEvents.emit("login.attempt", otherData);
 
-    const user = (await Model.first<T>(otherData)) as Auth | null;
+    const user = (await Model.first(otherData)) as Auth | null;
 
     if (!user) {
       authEvents.emit("login.failed", otherData, "User not found");
       return null;
     }
 
-    if (!this.verifyPassword(user.get("password"), password)) {
+    if (!this.verifyPassword(user.string("password")!, password)) {
       authEvents.emit("login.failed", otherData, "Invalid password");
       return null;
     }
 
-    return user as T;
+    return user;
   }
 
   /**
    * Full login flow: validate credentials, create tokens, emit events
    * Returns token pair on success, null on failure
    */
-  public async login<T extends Auth>(
-    Model: ChildModel<T>,
+  public async login(
+    Model: ChildModel<Auth>,
     credentials: any,
     deviceInfo?: DeviceInfo,
-  ): Promise<{ user: T; tokens: TokenPair } | null> {
-    const user = await this.attemptLogin<T>(Model, credentials);
+  ): Promise<{ user: Auth; tokens: TokenPair } | null | { user: Auth; accessToken: string }> {
+    const user = await this.attemptLogin(Model, credentials);
 
     if (!user) {
       return null;
+    }
+
+    // if no refresh token in config, then return user and access token only
+    if (!config.key("auth.jwt.refresh.enabled", true)) {
+      const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
+      return { user, accessToken };
     }
 
     const tokens = await this.createTokenPair(user, deviceInfo);
@@ -217,12 +230,44 @@ class AuthService {
   }
 
   /**
-   * Logout user (revoke specific refresh token)
+   * Logout user
+   * @param user - The authenticated user
+   * @param accessToken - Optional access token string to revoke
+   * @param refreshToken - Optional refresh token string to revoke
+   * If refresh token is not provided, behavior is determined by config:
+   * - "revoke-all" (default): Revoke ALL refresh tokens for security
+   * - "error": Throw error requiring refresh token
    */
-  public async logout(user: Auth, refreshToken?: RefreshToken): Promise<void> {
+  public async logout(user: Auth, accessToken?: string, refreshToken?: string): Promise<void> {
+    // Remove access token if provided
+    if (accessToken) {
+      await this.removeAccessToken(user, accessToken);
+    }
+
     if (refreshToken) {
-      await refreshToken.revoke();
-      authEvents.emit("session.destroyed", user, refreshToken);
+      // Revoke specific refresh token
+      const token = await RefreshToken.first({
+        token: refreshToken,
+        userId: user.id, // Security: ensure token belongs to this user
+      });
+
+      if (token) {
+        await token.revoke();
+        authEvents.emit("session.destroyed", user, token);
+      }
+    } else {
+      // No refresh token provided - check configured behavior
+      const behavior = config.key("auth.jwt.refresh.logoutWithoutToken", "revoke-all") as
+        | "revoke-all"
+        | "error";
+
+      if (behavior === "error") {
+        throw new Error("Refresh token required for logout");
+      }
+
+      // Default: revoke-all (fail-safe)
+      await this.revokeAllTokens(user);
+      authEvents.emit("logout.failsafe", user);
     }
 
     // Emit logout event
@@ -244,7 +289,7 @@ class AuthService {
    */
   public async revokeAllTokens(user: Auth): Promise<void> {
     // Revoke all refresh tokens
-    const refreshTokens = await RefreshToken.aggregate()
+    const refreshTokens = await RefreshToken.query()
       .where("userId", user.id)
       .where("userType", user.userType)
       .where("revokedAt", null)
@@ -269,7 +314,7 @@ class AuthService {
    * Revoke entire token family (for rotation breach detection)
    */
   public async revokeTokenFamily(familyId: string): Promise<void> {
-    const tokens = await RefreshToken.aggregate()
+    const tokens = await RefreshToken.query()
       .where("familyId", familyId)
       .where("revokedAt", null)
       .get();
@@ -286,7 +331,7 @@ class AuthService {
    * Cleanup expired tokens
    */
   public async cleanupExpiredTokens(): Promise<number> {
-    const expiredTokens = await RefreshToken.aggregate().where("expiresAt", "<", new Date()).get();
+    const expiredTokens = await RefreshToken.query().where("expiresAt", "<", new Date()).get();
 
     for (const token of expiredTokens) {
       authEvents.emit("token.expired", token);
@@ -305,11 +350,11 @@ class AuthService {
   private async enforceMaxRefreshTokens(user: Auth): Promise<void> {
     const maxPerUser = config.key("auth.jwt.refresh.maxPerUser", 5);
 
-    const activeTokens = await RefreshToken.aggregate()
+    const activeTokens = await RefreshToken.query()
       .where("userId", user.id)
       .where("userType", user.userType)
       .where("revokedAt", null)
-      .sort("createdAt", "asc")
+      .orderBy("createdAt", "asc")
       .get();
 
     // Revoke oldest tokens if exceeding limit
@@ -325,12 +370,12 @@ class AuthService {
    * Get active sessions for user
    */
   public async getActiveSessions(user: Auth): Promise<RefreshToken[]> {
-    return RefreshToken.aggregate()
+    return RefreshToken.query()
       .where("userId", user.id)
       .where("userType", user.userType)
       .where("revokedAt", null)
       .where("expiresAt", ">", new Date())
-      .sort("createdAt", "desc")
+      .orderBy("createdAt", "desc")
       .get();
   }
 }

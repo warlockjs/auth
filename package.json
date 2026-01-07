@@ -1,35 +1,36 @@
 {
-    "name": "@warlock.js/auth",
-    "version": "4.0.31",
-    "description": "Authentication system for Warlock.js applications",
-    "main": "./esm/index.js",
-    "dependencies": {
-        "@mongez/password": "^1.0.2",
-        "fast-jwt": "^6.1.0"
-    },
-    "peerDependencies": {
-        "@mongez/fs": "^3.0.5",
-        "@warlock.js/cascade": "4.0.31",
-        "@warlock.js/core": "4.0.31",
-        "@warlock.js/logger": "4.0.31",
-        "@mongez/events": "^2.1.0",
-        "@mongez/reinforcements": "^2.3.12",
-        "@mongez/copper": "^1.0.1"
-    },
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/warlockjs/auth"
-    },
-    "keywords": [
-        "nodejs",
-        "auth",
-        "auth.js",
-        "authentication",
-        "authorization",
-        "jwt"
-    ],
-    "author": "hassanzohdy",
-    "license": "MIT",
-    "module": "./esm/index.js",
-    "typings": "./esm/index.d.ts"
+  "name": "@warlock.js/auth",
+  "version": "4.0.34",
+  "description": "Authentication system for Warlock.js applications",
+  "main": "./esm/index.js",
+  "dependencies": {
+    "@mongez/password": "^1.0.2",
+    "fast-jwt": "^6.1.0"
+  },
+  "peerDependencies": {
+    "@mongez/copper": "^1.0.1",
+    "@mongez/events": "^2.1.0",
+    "@mongez/fs": "^3.0.5",
+    "@mongez/reinforcements": "^2.3.17",
+    "@warlock.js/cascade": "4.0.34",
+    "@warlock.js/core": "4.0.34",
+    "@warlock.js/logger": "4.0.34",
+    "@warlock.js/seal": "4.0.34"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/warlockjs/auth"
+  },
+  "keywords": [
+    "nodejs",
+    "auth",
+    "auth.js",
+    "authentication",
+    "authorization",
+    "jwt"
+  ],
+  "author": "hassanzohdy",
+  "license": "MIT",
+  "module": "./esm/index.js",
+  "typings": "./esm/index.d.ts"
 }

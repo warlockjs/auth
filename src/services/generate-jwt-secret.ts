@@ -6,7 +6,7 @@ import { log } from "@warlock.js/logger";
 export async function generateJWTSecret() {
   let envFile = rootPath(".env");
 
-  log.info("jwt", "generating", "Generating jwt secret");
+  log.info("jwt", "generating", "Generating JWT secrets");
 
   const environmentMode = environment();
 
@@ -22,20 +22,40 @@ export async function generateJWTSecret() {
 
   let contents = await getFileAsync(envFile);
 
-  if (contents.includes("JWT_SECRET")) {
-    log.warn("jwt", "exists", "JWT secret already exists in the .env file.");
+  const hasJwtSecret = contents.includes("JWT_SECRET");
+  const hasJwtRefreshSecret = contents.includes("JWT_REFRESH_SECRET");
+
+  if (hasJwtSecret && hasJwtRefreshSecret) {
+    log.warn("jwt", "exists", "JWT secrets already exist in the .env file.");
     return;
   }
 
-  const key = Random.string(32);
+  let secretsToAdd = "";
 
-  contents += `
-
+  if (!hasJwtSecret) {
+    const jwtSecret = Random.string(32);
+    secretsToAdd += `
 # JWT Secret
-JWT_SECRET=${key}
+JWT_SECRET=${jwtSecret}
 `;
+    log.success("jwt", "generated", "JWT_SECRET generated and added to the .env file.");
+  } else {
+    log.info("jwt", "exists", "JWT_SECRET already exists in the .env file.");
+  }
 
-  await putFileAsync(envFile, contents);
+  if (!hasJwtRefreshSecret) {
+    const jwtRefreshSecret = Random.string(32);
+    secretsToAdd += `
+# JWT Refresh Secret
+JWT_REFRESH_SECRET=${jwtRefreshSecret}
+`;
+    log.success("jwt", "generated", "JWT_REFRESH_SECRET generated and added to the .env file.");
+  } else {
+    log.info("jwt", "exists", "JWT_REFRESH_SECRET already exists in the .env file.");
+  }
 
-  log.success("jwt", "generated", `JWT secret key generated and added to the .env file.`);
+  if (secretsToAdd) {
+    contents += secretsToAdd;
+    await putFileAsync(envFile, contents);
+  }
 }

@@ -1,3 +1,4 @@
+import { ChildModel } from "@warlock.js/cascade";
 import { type Algorithm } from "fast-jwt";
 import type { Auth } from "../models/auth";
 import type { Duration, ExpiresIn } from "../utils/duration";
@@ -23,13 +24,20 @@ import type { Duration, ExpiresIn } from "../utils/duration";
  */
 export const NO_EXPIRATION = Symbol("NO_EXPIRATION");
 
+/**
+ * Behavior when logout is called without a refresh token
+ * - "revoke-all": Revoke all refresh tokens for the user (secure default)
+ * - "error": Return an error requiring the refresh token
+ */
+export type LogoutWithoutTokenBehavior = "revoke-all" | "error";
+
 export type AuthConfigurations = {
   /**
    * Define all user types
    * This is important to differentiate between user types when validating and generating tokens
    */
   userType: {
-    [userType: string]: typeof Auth;
+    [userType: string]: ChildModel<Auth>;
   };
   /**
    * JWT configurations
@@ -61,6 +69,11 @@ export type AuthConfigurations = {
        */
       secret?: string;
       /**
+       * Enable refresh token
+       * @default true
+       */
+      enabled?: boolean;
+      /**
        * Refresh token expiration time
        * Supports Duration object or string format
        * @example { days: 7 }, { weeks: 1 }, "7d", "1w"
@@ -79,6 +92,13 @@ export type AuthConfigurations = {
        * @default 5
        */
       maxPerUser?: number;
+      /**
+       * Behavior when logout is called without a refresh token
+       * - "revoke-all": Revoke all tokens for security (default)
+       * - "error": Require refresh token, return error if missing
+       * @default "revoke-all"
+       */
+      logoutWithoutToken?: LogoutWithoutTokenBehavior;
     };
   };
   /**
@@ -134,4 +154,8 @@ export type DeviceInfo = {
    * @internal
    */
   familyId?: string;
+  /**
+   * Access token payload
+   */
+  payload?: Record<string, any>;
 };

@@ -1,24 +1,27 @@
-import { Model, type Casts } from "@warlock.js/cascade";
+import { Model } from "@warlock.js/cascade";
+import { v } from "@warlock.js/seal";
+
+const refreshTokenSchema = v.object({
+  token: v.string().required(),
+  userId: v.number().required(),
+  userType: v.string().required(),
+  familyId: v.string().required(),
+  expiresAt: v.date().required(),
+  lastUsedAt: v.date().default(() => new Date()),
+  revokedAt: v.date(),
+  deviceInfo: v.record(v.any()),
+});
 
 export class RefreshToken extends Model {
   /**
    * {@inheritDoc}
    */
-  public static collection = "refreshTokens";
+  public static table = "refreshTokens";
 
   /**
    * {@inheritDoc}
    */
-  protected casts: Casts = {
-    token: "string",
-    userId: "int",
-    userType: "string",
-    familyId: "string",
-    expiresAt: "date",
-    lastUsedAt: "date",
-    revokedAt: "date",
-    deviceInfo: "object",
-  };
+  public static schema = refreshTokenSchema;
 
   /**
    * Check if token is expired
@@ -47,13 +50,13 @@ export class RefreshToken extends Model {
    * Revoke this token
    */
   public async revoke(): Promise<this> {
-    return this.save({ revokedAt: new Date() });
+    return this.merge({ revokedAt: new Date() }).save();
   }
 
   /**
    * Mark token as used (update lastUsedAt)
    */
   public async markAsUsed(): Promise<void> {
-    this.silentSaving({ lastUsedAt: new Date() });
+    await this.merge({ lastUsedAt: new Date() }).save();
   }
 }

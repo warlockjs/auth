@@ -1,19 +1,18 @@
-import { migrationOffice } from "@warlock.js/cascade";
+import { migrate } from "@warlock.js/cascade";
 import { RefreshToken } from "./refresh-token";
 
-export default migrationOffice.register({
+export default migrate(RefreshToken, {
   name: "refreshToken",
-  blueprint: RefreshToken.blueprint(),
-  up: (blueprint) => {
-    blueprint.index("token");
-    blueprint.index("userId");
-    blueprint.index("familyId");
-    blueprint.index("expiresAt");
+  up() {
+    this.index("token");
+    this.index("userId");
+    this.index("familyId");
+    this.index("expiresAt");
   },
-  down: (blueprint) => {
-    blueprint.dropIndex("token");
-    blueprint.dropIndex("userId");
-    blueprint.dropIndex("familyId");
-    blueprint.dropIndex("expiresAt");
+  down() {
+    this.dropIndex("token");
+    this.dropIndex("userId");
+    this.dropIndex("familyId");
+    this.dropIndex("expiresAt");
   },
 });
