@@ -1,18 +1,29 @@
 import { migrate } from "@warlock.js/cascade";
 import { RefreshToken } from "./refresh-token";
 
-export default migrate(RefreshToken, {
+export const RefreshTokenMigration = migrate(RefreshToken, {
   name: "refreshToken",
   up() {
-    this.index("token");
-    this.index("userId");
-    this.index("familyId");
-    this.index("expiresAt");
+    // Create table
+    this.createTableIfNotExists();
+
+    // Primary key
+    this.id();
+
+    // Token fields
+    this.string("token", 500).unique();
+    this.integer("userId").index();
+    this.string("userType", 50);
+    this.string("familyId", 100).index();
+    this.timestamp("expiresAt").index();
+    this.timestamp("lastUsedAt").nullable();
+    this.timestamp("revokedAt").nullable();
+    this.json("deviceInfo").nullable();
+
+    // Timestamps
+    this.timestamps();
   },
   down() {
-    this.dropIndex("token");
-    this.dropIndex("userId");
-    this.dropIndex("familyId");
-    this.dropIndex("expiresAt");
+    this.dropTableIfExists();
   },
 });
