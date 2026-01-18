@@ -1,6 +1,6 @@
 {
     "name": "@warlock.js/auth",
-    "version": "4.0.115",
+    "version": "4.0.116",
     "description": "Authentication system for Warlock.js applications",
     "main": "./esm/index.js",
     "dependencies": {
@@ -12,10 +12,10 @@
         "@mongez/events": "^2.1.0",
         "@mongez/fs": "^3.0.5",
         "@mongez/reinforcements": "^2.3.17",
-        "@warlock.js/cascade": "4.0.115",
-        "@warlock.js/core": "4.0.115",
-        "@warlock.js/logger": "4.0.115",
-        "@warlock.js/seal": "4.0.115"
+        "@warlock.js/cascade": "4.0.116",
+        "@warlock.js/core": "4.0.116",
+        "@warlock.js/logger": "4.0.116",
+        "@warlock.js/seal": "4.0.116"
     },
     "repository": {
         "type": "git",
