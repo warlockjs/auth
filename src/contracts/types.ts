@@ -1,6 +1,6 @@
 import { ChildModel } from "@warlock.js/cascade";
 import { type Algorithm } from "fast-jwt";
-import type { Auth } from "../models/auth";
+import type { Auth } from "../models/auth.model";
 import type { Duration, ExpiresIn } from "../utils/duration";
 
 /**

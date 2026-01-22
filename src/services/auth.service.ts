@@ -4,7 +4,7 @@ import type { ChildModel } from "@warlock.js/cascade";
 import { config } from "@warlock.js/core";
 import type { DeviceInfo, TokenPair } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
-import type { Auth } from "../models/auth";
+import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
 import { parseExpirationToMs, toJwtExpiresIn } from "../utils/duration";
 import { authEvents } from "./auth-events";
@@ -351,9 +351,11 @@ class AuthService {
     const maxPerUser = config.key("auth.jwt.refresh.maxPerUser", 5);
 
     const activeTokens = await RefreshToken.query()
-      .where("userId", user.id)
-      .where("userType", user.userType)
-      .where("revokedAt", null)
+      .where({
+        userId: user.id,
+        userType: user.userType,
+        reovkedAt: null,
+      })
       .orderBy("createdAt", "asc")
       .get();
 
@@ -371,9 +373,11 @@ class AuthService {
    */
   public async getActiveSessions(user: Auth): Promise<RefreshToken[]> {
     return RefreshToken.query()
-      .where("userId", user.id)
-      .where("userType", user.userType)
-      .where("revokedAt", null)
+      .where({
+        userId: user.id,
+        userType: user.userType,
+        revokedAt: null,
+      })
       .where("expiresAt", ">", new Date())
       .orderBy("createdAt", "desc")
       .get();

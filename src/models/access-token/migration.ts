@@ -1,5 +1,5 @@
 import { migrate } from "@warlock.js/cascade";
-import { AccessToken } from "./access-token";
+import { AccessToken } from "./access-token.model";
 
 export const AccessTokenMigration = migrate(AccessToken, {
   name: "accessToken",

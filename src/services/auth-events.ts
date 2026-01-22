@@ -1,6 +1,6 @@
 import events, { type EventSubscription } from "@mongez/events";
 import type { DeviceInfo, TokenPair } from "../contracts/types";
-import type { Auth } from "../models/auth";
+import type { Auth } from "../models/auth.model";
 import type { RefreshToken } from "../models/refresh-token";
 
 /**

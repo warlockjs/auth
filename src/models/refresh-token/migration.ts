@@ -1,5 +1,5 @@
 import { migrate } from "@warlock.js/cascade";
-import { RefreshToken } from "./refresh-token";
+import { RefreshToken } from "./refresh-token.model";
 
 export const RefreshTokenMigration = migrate(RefreshToken, {
   name: "refreshToken",
