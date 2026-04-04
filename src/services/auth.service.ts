@@ -1,12 +1,11 @@
-import { hash, verify } from "@mongez/password";
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
-import { config } from "@warlock.js/core";
-import type { DeviceInfo, TokenPair } from "../contracts/types";
+import { config, hashPassword, verifyPassword } from "@warlock.js/core";
+import type { AccessTokenOutput, DeviceInfo, TokenPair } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
-import { parseExpirationToMs, toJwtExpiresIn } from "../utils/duration";
+import { toJwtExpiresIn } from "../utils/duration";
 import { authEvents } from "./auth-events";
 import { jwt } from "./jwt";
 
@@ -17,30 +16,32 @@ class AuthService {
   public buildAccessTokenPayload(user: Auth) {
     return {
       id: user.id,
-      _id: user.get("_id"),
       userType: user.userType,
-      createdAt: Date.now(),
+      created_at: Date.now(),
     };
   }
 
   /**
    * Generate access token for user
    */
-  public async generateAccessToken(user: Auth, payload?: any): Promise<string> {
+  public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
     const expiresInConfig = config.key("auth.jwt.expiresIn");
-    const expiresIn = toJwtExpiresIn(expiresInConfig, 3600000); // default 1 hour
+    const expiresIn = toJwtExpiresIn(expiresInConfig, 3_600); // default 1 hour
 
     // If expiresIn is undefined, token never expires
-    const token = expiresIn ? await jwt.generate(data, { expiresIn }) : await jwt.generate(data);
+    const token = await jwt.generate(data, { expiresIn });
+
+    const decoed = await jwt.verify(token);
 
     // Store in database
     await AccessToken.create({
       token,
-      user: data,
+      user_id: user.id,
+      user_type: user.userType,
     });
 
-    return token;
+    return { token, expiresAt: new Date(decoed.exp * 1_000).toISOString() };
   }
 
   /**
@@ -48,8 +49,6 @@ class AuthService {
    */
   public async createRefreshToken(user: Auth, deviceInfo?: DeviceInfo): Promise<RefreshToken> {
     const familyId = deviceInfo?.familyId || Random.string(32);
-    const expiresInConfig = config.key("auth.jwt.refresh.expiresIn");
-    const expiresInMs = parseExpirationToMs(expiresInConfig, 7 * 24 * 60 * 60 * 1000); // default 7 days
 
     const payload = {
       userId: user.id,
@@ -59,22 +58,22 @@ class AuthService {
 
     const token = await jwt.generateRefreshToken(payload);
 
-    // Enforce max tokens per user
-    await this.enforceMaxRefreshTokens(user);
+    const decoed = await jwt.verifyRefreshToken(token);
 
     // Calculate expiration date (undefined means never expires, but we still set a far future date)
-    const expiresAt = expiresInMs
-      ? new Date(Date.now() + expiresInMs)
-      : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(decoed.exp * 1_000).toISOString();
+
+    // Enforce max tokens per user
+    await this.enforceMaxRefreshTokens(user);
 
     // Store in database
     return RefreshToken.create({
       token,
-      userId: user.id,
-      userType: user.userType,
-      familyId,
-      expiresAt,
-      deviceInfo: deviceInfo
+      user_id: user.id,
+      user_type: user.userType,
+      family_id: familyId,
+      expires_at: expiresAt,
+      device_info: deviceInfo
         ? {
             userAgent: deviceInfo.userAgent,
             ip: deviceInfo.ip,
@@ -93,8 +92,10 @@ class AuthService {
 
     const tokenPair: TokenPair = {
       accessToken,
-      refreshToken: refreshToken.get("token"),
-      expiresIn: config.key("auth.jwt.expiresIn", "1h"),
+      refreshToken: {
+        token: refreshToken.get("token"),
+        expiresAt: refreshToken.get("expires_at"),
+      },
     };
 
     // Emit events
@@ -127,7 +128,7 @@ class AuthService {
       if (!refreshToken?.isValid) {
         // If token was already used (rotation detection), revoke entire family
         if (refreshToken) {
-          await this.revokeTokenFamily(refreshToken.get("familyId"));
+          await this.revokeTokenFamily(refreshToken.get("family_id"));
         }
         return null;
       }
@@ -150,7 +151,7 @@ class AuthService {
       // 5. Generate new token pair (keep same family)
       const newTokenPair = await this.createTokenPair(user, {
         ...deviceInfo,
-        familyId: refreshToken.get("familyId"),
+        familyId: refreshToken.get("family_id"),
       });
 
       // Emit token refreshed event
@@ -165,34 +166,34 @@ class AuthService {
   /**
    * Verify password
    */
-  public verifyPassword(hashedPassword: string, plainPassword: string): boolean {
-    return verify(String(hashedPassword), String(plainPassword));
+  public async verifyPassword(plainPassword: string, hashedPassword: string): Promise<boolean> {
+    return verifyPassword(plainPassword, hashedPassword);
   }
 
   /**
    * Hash password
    */
-  public hashPassword(password: string): string {
-    return hash(String(password), config.key("auth.password.salt", 12));
+  public async hashPassword(password: string): Promise<string> {
+    return hashPassword(password);
   }
 
   /**
    * Attempt to login user with given credentials
    */
-  public async attemptLogin(Model: ChildModel<Auth>, data: any): Promise<Auth | null> {
+  public async attemptLogin<T extends Auth>(Model: ChildModel<T>, data: any): Promise<T | null> {
     const { password, ...otherData } = data;
 
     // Emit login attempt event
     authEvents.emit("login.attempt", otherData);
 
-    const user = (await Model.first(otherData)) as Auth | null;
+    const user = (await Model.first(otherData)) as T | null;
 
     if (!user) {
       authEvents.emit("login.failed", otherData, "User not found");
       return null;
     }
 
-    if (!this.verifyPassword(user.string("password")!, password)) {
+    if (!(await this.verifyPassword(password, user.string("password")!))) {
       authEvents.emit("login.failed", otherData, "Invalid password");
       return null;
     }
@@ -204,11 +205,11 @@ class AuthService {
    * Full login flow: validate credentials, create tokens, emit events
    * Returns token pair on success, null on failure
    */
-  public async login(
-    Model: ChildModel<Auth>,
+  public async login<T extends Auth>(
+    Model: ChildModel<T>,
     credentials: any,
     deviceInfo?: DeviceInfo,
-  ): Promise<{ user: Auth; tokens: TokenPair } | null | { user: Auth; accessToken: string }> {
+  ): Promise<{ user: T; tokens: TokenPair } | null | { user: T; accessToken: AccessTokenOutput }> {
     const user = await this.attemptLogin(Model, credentials);
 
     if (!user) {
@@ -280,7 +281,27 @@ class AuthService {
   public async removeAccessToken(user: Auth, token: string): Promise<void> {
     AccessToken.delete({
       token,
-      "user.id": user.id,
+      userId: user.id,
+    });
+  }
+
+  /**
+   * Remove all access tokens for a user
+   */
+  public async removeAllAccessTokens(user: Auth): Promise<void> {
+    // Delete access token
+    AccessToken.delete({
+      user_id: user.id,
+    });
+  }
+
+  /**
+   * Remove specific refresh token
+   */
+  public async removeRefreshToken(user: Auth, token: string): Promise<void> {
+    RefreshToken.delete({
+      token,
+      userId: user.id,
     });
   }
 
@@ -290,9 +311,9 @@ class AuthService {
   public async revokeAllTokens(user: Auth): Promise<void> {
     // Revoke all refresh tokens
     const refreshTokens = await RefreshToken.query()
-      .where("userId", user.id)
-      .where("userType", user.userType)
-      .where("revokedAt", null)
+      .where("user_id", user.id)
+      .where("user_type", user.userType)
+      .where("revoked_at", null)
       .get();
 
     for (const token of refreshTokens) {
@@ -301,10 +322,7 @@ class AuthService {
     }
 
     // Delete all access tokens
-    await AccessToken.delete({
-      "user.id": user.id,
-      "user.userType": user.userType,
-    });
+    await this.removeAllAccessTokens(user);
 
     // Emit logout all event
     authEvents.emit("logout.all", user);
@@ -315,8 +333,8 @@ class AuthService {
    */
   public async revokeTokenFamily(familyId: string): Promise<void> {
     const tokens = await RefreshToken.query()
-      .where("familyId", familyId)
-      .where("revokedAt", null)
+      .where("family_id", familyId)
+      .where("revoked_at", null)
       .get();
 
     for (const token of tokens) {
@@ -331,7 +349,7 @@ class AuthService {
    * Cleanup expired tokens
    */
   public async cleanupExpiredTokens(): Promise<number> {
-    const expiredTokens = await RefreshToken.query().where("expiresAt", "<", new Date()).get();
+    const expiredTokens = await RefreshToken.query().where("expires_at", "<", new Date()).get();
 
     for (const token of expiredTokens) {
       authEvents.emit("token.expired", token);
@@ -352,11 +370,11 @@ class AuthService {
 
     const activeTokens = await RefreshToken.query()
       .where({
-        userId: user.id,
-        userType: user.userType,
-        reovkedAt: null,
+        user_id: user.id,
+        user_type: user.userType,
+        revoked_at: null,
       })
-      .orderBy("createdAt", "asc")
+      .orderBy("created_at", "asc")
       .get();
 
     // Revoke oldest tokens if exceeding limit
@@ -374,12 +392,12 @@ class AuthService {
   public async getActiveSessions(user: Auth): Promise<RefreshToken[]> {
     return RefreshToken.query()
       .where({
-        userId: user.id,
-        userType: user.userType,
-        revokedAt: null,
+        user_id: user.id,
+        user_type: user.userType,
+        revoked_at: null,
       })
-      .where("expiresAt", ">", new Date())
-      .orderBy("createdAt", "desc")
+      .where("expires_at", ">", new Date())
+      .orderBy("created_at", "desc")
       .get();
   }
 }

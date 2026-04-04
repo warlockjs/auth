@@ -8,17 +8,17 @@ export const RefreshTokenMigration = migrate(RefreshToken, {
     this.createTableIfNotExists();
 
     // Primary key
-    this.id();
+    this.primaryUuid();
 
     // Token fields
-    this.string("token", 500).unique();
-    this.integer("userId").index();
-    this.string("userType", 50);
-    this.string("familyId", 100).index();
-    this.timestamp("expiresAt").index();
-    this.timestamp("lastUsedAt").nullable();
-    this.timestamp("revokedAt").nullable();
-    this.json("deviceInfo").nullable();
+    this.text("token").unique();
+    this.uuid("user_id").index();
+    this.string("user_type", 50);
+    this.text("family_id").index();
+    this.timestamp("expires_at").index();
+    this.timestamp("last_used_at").nullable();
+    this.timestamp("revoked_at").nullable();
+    this.json("device_info").nullable();
 
     // Timestamps
     this.timestamps();

@@ -3,21 +3,17 @@ import { v } from "@warlock.js/seal";
 
 const accessTokenSchema = v.object({
   token: v.string().required(),
-  lastAccess: v.date().default(() => new Date()),
-  user: v
-    .object({
-      id: v.number().required(),
-      userType: v.string(),
-    })
-    .allowUnknown()
-    .required(),
+  last_access: v.date().default(() => new Date()),
+  user_id: v.scalar().required(),
+  user_type: v.string().required(),
+  is_active: v.boolean().default(true),
 });
 
 export class AccessToken extends Model {
   /**
    * {@inheritDoc}
    */
-  public static table = "accessTokens";
+  public static table = "access_tokens";
 
   public static schema = accessTokenSchema;
 }

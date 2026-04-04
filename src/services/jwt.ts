@@ -8,7 +8,7 @@ import {
 } from "fast-jwt";
 
 const getSecretKey = () => config.key("auth.jwt.secret") as string;
-const getAlgorithm = () => config.key("auth.jwt.algorithm") as Algorithm;
+const getAlgorithm = () => config.key("auth.jwt.algorithm", "HS256") as Algorithm;
 
 const getRefreshSecretKey = () => config.key("auth.jwt.refresh.secret") as string;
 // Assuming there's a separate config for refresh token validity, for example, '7d' for 7 days
@@ -30,7 +30,8 @@ export const jwt = {
     // Create a signer function with predefined options
     const sign = createSigner({ key, ...options, algorithm });
 
-    return sign({ ...payload });
+    const token = await sign({ ...payload });
+    return token;
   },
 
   /**

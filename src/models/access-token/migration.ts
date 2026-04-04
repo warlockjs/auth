@@ -8,17 +8,18 @@ export const AccessTokenMigration = migrate(AccessToken, {
     this.createTableIfNotExists();
 
     // Primary key
-    this.id();
+    this.primaryUuid();
 
     // Token field
-    this.string("token", 500).unique();
-    this.timestamp("lastAccess").nullable();
+    this.text("token").unique();
+    this.timestamp("last_access").nullable();
 
-    // Embedded user info (JSONB)
-    this.json("user");
+    // User reference (flat columns for cross-driver compatibility)
+    this.uuid("user_id").index();
+    this.string("user_type", 50);
 
     // Status (for token revocation)
-    this.boolean("isActive").default(true);
+    this.boolean("is_active");
 
     // Timestamps
     this.timestamps();

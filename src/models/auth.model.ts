@@ -1,5 +1,5 @@
 import { type ChildModel, Model, type ModelSchema } from "@warlock.js/cascade";
-import type { DeviceInfo, TokenPair } from "../contracts/types";
+import type { AccessTokenOutput, DeviceInfo, TokenPair } from "../contracts/types";
 import { authService } from "../services";
 import type { RefreshToken } from "./refresh-token/refresh-token.model";
 
@@ -26,7 +26,7 @@ export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Mod
   /**
    * Generate access token
    */
-  public async generateAccessToken(data?: any): Promise<string> {
+  public async generateAccessToken(data?: any): Promise<AccessTokenOutput> {
     return authService.generateAccessToken(this, data);
   }
 
@@ -42,6 +42,20 @@ export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Mod
    */
   public async removeAccessToken(token: string): Promise<void> {
     return authService.removeAccessToken(this, token);
+  }
+
+  /**
+   * Remove refresh token
+   */
+  public async removeRefreshToken(token: string): Promise<void> {
+    return authService.removeRefreshToken(this, token);
+  }
+
+  /**
+   * Remove all access tokens
+   */
+  public async removeAllAccessTokens(): Promise<void> {
+    return authService.removeAllAccessTokens(this);
   }
 
   /**
@@ -68,7 +82,7 @@ export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Mod
   /**
    * Confirm password
    */
-  public confirmPassword(password: string): boolean {
+  public async confirmPassword(password: string): Promise<boolean> {
     return authService.verifyPassword(this.string("password")!, password);
   }
 }

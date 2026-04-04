@@ -115,6 +115,17 @@ export type AuthConfigurations = {
   };
 };
 
+export type AccessTokenOutput = {
+  /**
+   * JWT Token
+   */
+  token: string;
+  /**
+   * Exprie time in ISO format UTC time
+   */
+  expiresAt: string;
+};
+
 /**
  * Token pair returned after login or token refresh
  */
@@ -122,15 +133,11 @@ export type TokenPair = {
   /**
    * JWT access token (short-lived)
    */
-  accessToken: string;
+  accessToken: AccessTokenOutput;
   /**
    * JWT refresh token (long-lived)
    */
-  refreshToken: string;
-  /**
-   * Access token expiration time in seconds or time string
-   */
-  expiresIn: number | string;
+  refreshToken: AccessTokenOutput;
 };
 
 /**

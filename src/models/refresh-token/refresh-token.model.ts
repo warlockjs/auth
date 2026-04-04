@@ -3,20 +3,20 @@ import { v } from "@warlock.js/seal";
 
 const refreshTokenSchema = v.object({
   token: v.string().required(),
-  userId: v.number().required(),
-  userType: v.string().required(),
-  familyId: v.string().required(),
-  expiresAt: v.date().required(),
-  lastUsedAt: v.date().default(() => new Date()),
-  revokedAt: v.date(),
-  deviceInfo: v.record(v.any()),
+  user_id: v.scalar().required(),
+  user_type: v.string().required(),
+  family_id: v.string().required(),
+  expires_at: v.date().required(),
+  last_used_at: v.date().default(() => new Date()),
+  revoked_at: v.date(),
+  device_info: v.record(v.any()),
 });
 
 export class RefreshToken extends Model {
   /**
    * {@inheritDoc}
    */
-  public static table = "refreshTokens";
+  public static table = "refresh_tokens";
 
   /**
    * {@inheritDoc}
@@ -27,7 +27,7 @@ export class RefreshToken extends Model {
    * Check if token is expired
    */
   public get isExpired(): boolean {
-    const expiresAt = this.get("expiresAt");
+    const expiresAt = this.get("expires_at");
     if (!expiresAt) return false;
     return new Date() > new Date(expiresAt);
   }
@@ -36,7 +36,7 @@ export class RefreshToken extends Model {
    * Check if token is revoked
    */
   public get isRevoked(): boolean {
-    return !!this.get("revokedAt");
+    return !!this.get("revoked_at");
   }
 
   /**
@@ -50,13 +50,13 @@ export class RefreshToken extends Model {
    * Revoke this token
    */
   public async revoke(): Promise<this> {
-    return this.merge({ revokedAt: new Date() }).save();
+    return this.merge({ revoked_at: new Date() }).save();
   }
 
   /**
-   * Mark token as used (update lastUsedAt)
+   * Mark token as used (update last_used_at)
    */
   public async markAsUsed(): Promise<void> {
-    await this.merge({ lastUsedAt: new Date() }).save();
+    await this.merge({ last_used_at: new Date() }).save();
   }
 }
