@@ -8,8 +8,8 @@ const refreshTokenSchema = v.object({
   family_id: v.string().required(),
   expires_at: v.date().required(),
   last_used_at: v.date().default(() => new Date()),
-  revoked_at: v.date(),
-  device_info: v.record(v.any()),
+  revoked_at: v.date().optional(),
+  device_info: v.record(v.any()).optional(),
 });
 
 export class RefreshToken extends Model {

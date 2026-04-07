@@ -166,3 +166,7 @@ export type DeviceInfo = {
    */
   payload?: Record<string, any>;
 };
+
+export type LoginResult<UserType extends Auth> =
+  | { user: UserType; tokens: TokenPair }
+  | { user: UserType; accessToken: AccessTokenOutput };

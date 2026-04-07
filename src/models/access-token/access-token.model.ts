@@ -3,7 +3,7 @@ import { v } from "@warlock.js/seal";
 
 const accessTokenSchema = v.object({
   token: v.string().required(),
-  last_access: v.date().default(() => new Date()),
+  last_access: v.date().defaultNow().optional(),
   user_id: v.scalar().required(),
   user_type: v.string().required(),
   is_active: v.boolean().default(true),

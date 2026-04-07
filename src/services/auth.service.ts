@@ -1,7 +1,7 @@
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
 import { config, hashPassword, verifyPassword } from "@warlock.js/core";
-import type { AccessTokenOutput, DeviceInfo, TokenPair } from "../contracts/types";
+import type { AccessTokenOutput, DeviceInfo, LoginResult, TokenPair } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
@@ -209,7 +209,7 @@ class AuthService {
     Model: ChildModel<T>,
     credentials: any,
     deviceInfo?: DeviceInfo,
-  ): Promise<{ user: T; tokens: TokenPair } | null | { user: T; accessToken: AccessTokenOutput }> {
+  ): Promise<LoginResult<T> | null> {
     const user = await this.attemptLogin(Model, credentials);
 
     if (!user) {
