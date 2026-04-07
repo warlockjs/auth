@@ -227,7 +227,7 @@ class AuthService {
     // Emit login success event
     authEvents.emit("login.success", user, tokens, deviceInfo);
 
-    return { user, tokens };
+    return { user, tokens } as LoginResult<T>;
   }
 
   /**
