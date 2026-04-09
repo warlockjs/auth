@@ -219,7 +219,7 @@ class AuthService {
     // if no refresh token in config, then return user and access token only
     if (!config.key("auth.jwt.refresh.enabled", true)) {
       const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
-      return { user, accessToken };
+      return { user, tokens: { accessToken } };
     }
 
     const tokens = await this.createTokenPair(user, deviceInfo);

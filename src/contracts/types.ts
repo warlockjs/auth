@@ -137,7 +137,7 @@ export type TokenPair = {
   /**
    * JWT refresh token (long-lived)
    */
-  refreshToken: AccessTokenOutput;
+  refreshToken?: AccessTokenOutput;
 };
 
 /**
@@ -169,6 +169,5 @@ export type DeviceInfo = {
 
 export type LoginResult<UserType extends Auth> = {
   user: UserType;
-  tokens?: TokenPair;
-  accessToken?: AccessTokenOutput;
+  tokens: TokenPair;
 };
