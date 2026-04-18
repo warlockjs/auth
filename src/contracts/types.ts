@@ -15,14 +15,14 @@ import type { Duration, ExpiresIn } from "../utils/duration";
  * const authConfigurations: AuthConfigurations = {
  *   jwt: {
  *     secret: env("JWT_SECRET"),
- *     expiresIn: NO_EXPIRATION,  // Token never expires
+ *     expiresIn: NO_EXPIRATION,  // Token expires within 100 years
  *   },
  * };
  *
  * export default authConfigurations;
  * ```
  */
-export const NO_EXPIRATION = Symbol("NO_EXPIRATION");
+export const NO_EXPIRATION = "100y";
 
 /**
  * Behavior when logout is called without a refresh token
