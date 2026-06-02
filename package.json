@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/auth",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "type": "module",
   "description": "Authentication system for Warlock.js applications",
   "main": "./esm/index.js",
