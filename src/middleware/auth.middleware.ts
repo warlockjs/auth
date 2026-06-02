@@ -4,18 +4,29 @@ import { AccessToken } from "../models/access-token";
 import { jwt } from "../services/jwt";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 
-export function authMiddleware(allowedUserType?: string | string[]) {
-  const allowedTypes = !allowedUserType
-    ? []
-    : Array.isArray(allowedUserType)
-      ? allowedUserType
-      : [allowedUserType];
+/**
+ * Build a route gate that always requires an authenticated request.
+ *
+ * The argument is mandatory and selects which user types may pass:
+ * - `[]` — any authenticated user (token required, type not checked).
+ * - `"admin"` / `["admin", "staff"]` — token required AND the user's
+ *   `userType` must be one of the listed types.
+ *
+ * There is no anonymous/optional mode: a request without a valid access
+ * token is always rejected with `401`. Routes that should be public
+ * simply omit the middleware.
+ *
+ * @example
+ * router.get("/account", authMiddleware([]), accountController);
+ * router.get("/admin", authMiddleware("admin"), adminController);
+ * router.get("/back-office", authMiddleware(["admin", "staff"]), backOfficeController);
+ */
+export function authMiddleware(allowedUserType: string | string[]) {
+  const allowedTypes = Array.isArray(allowedUserType) ? allowedUserType : [allowedUserType];
 
   const auth: Middleware = async (request: Request, response: Response) => {
     try {
       const authorizationValue = request.authorizationValue;
-
-      if (!allowedTypes.length && !authorizationValue) return;
 
       if (!authorizationValue) {
         return response.unauthorized({
@@ -79,7 +90,6 @@ export function authMiddleware(allowedUserType?: string | string[]) {
     } catch (err: any) {
       log.error("http", "auth", err);
 
-      // unset current user
       request.clearCurrentUser();
 
       return response.unauthorized({

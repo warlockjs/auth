@@ -1,7 +1,6 @@
 import { ChildModel } from "@warlock.js/cascade";
 import { type Algorithm } from "fast-jwt";
 import type { Auth } from "../models/auth.model";
-import type { Duration, ExpiresIn } from "../utils/duration";
 
 /**
  * Symbol to indicate no expiration for tokens
@@ -54,11 +53,11 @@ export type AuthConfigurations = {
     algorithm?: Algorithm;
     /**
      * Access token expiration time
-     * Supports Duration object, string format, or NO_EXPIRATION
-     * @example { hours: 1 }, { days: 7, hours: 12 }, "1h", "1d 2h", NO_EXPIRATION
-     * @default { hours: 1 }
+     * It accepts any value `ms` package accepts
+     * @example "1h" or NO_EXPIRATION
+     * @default "1h"
      */
-    expiresIn?: ExpiresIn;
+    expiresIn?: string;
     /**
      * Refresh token configurations
      */
@@ -75,11 +74,11 @@ export type AuthConfigurations = {
       enabled?: boolean;
       /**
        * Refresh token expiration time
-       * Supports Duration object or string format
-       * @example { days: 7 }, { weeks: 1 }, "7d", "1w"
-       * @default { days: 7 }
+       * It accepts any value `ms` package accepts
+       * @example "7d" or "1w"
+       * @default "7d"
        */
-      expiresIn?: Duration | string | number;
+      expiresIn?: string;
       /**
        * Enable token rotation (issue new refresh token on each use)
        * Old refresh token is invalidated after use

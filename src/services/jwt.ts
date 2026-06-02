@@ -6,13 +6,23 @@ import {
   type SignerOptions,
   type VerifierOptions,
 } from "fast-jwt";
+import ms from "ms";
 
 const getSecretKey = () => config.key("auth.jwt.secret") as string;
 const getAlgorithm = () => config.key("auth.jwt.algorithm", "HS256") as Algorithm;
 
-const getRefreshSecretKey = () => config.key("auth.jwt.refresh.secret") as string;
-// Assuming there's a separate config for refresh token validity, for example, '7d' for 7 days
-const getRefreshTokenValidity = () => config.key("auth.jwt.refresh.expiresIn") as number | string;
+// Refresh tokens may declare their own secret. When `auth.jwt.refresh.secret`
+// is unset/empty we fall back to the main JWT secret, matching the documented
+// optional behavior in `contracts/types.ts`.
+const getRefreshSecretKey = () =>
+  (config.key("auth.jwt.refresh.secret") || getSecretKey()) as string;
+// Refresh token validity — defaults to 7d when not configured. Opt in to
+// no-expiry semantics with `NO_EXPIRATION` (100y) from `contracts/types.ts`.
+const getRefreshTokenValidity = () => {
+  const expiresIn = config.key("auth.jwt.refresh.expiresIn") || "7d";
+
+  return ms(expiresIn);
+};
 
 export const jwt = {
   /**
@@ -59,7 +69,7 @@ export const jwt = {
     payload: any,
     {
       key = getRefreshSecretKey(),
-      expiresIn = getRefreshTokenValidity(),
+      expiresIn,
       algorithm = getAlgorithm(),
       ...options
     }: SignerOptions & { key?: string } = {},

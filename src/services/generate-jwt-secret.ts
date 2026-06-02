@@ -1,4 +1,4 @@
-import { fileExistsAsync, getFileAsync, putFileAsync } from "@mongez/fs";
+import { fileExistsAsync, getFileAsync, putFileAsync } from "@warlock.js/fs";
 import { Random } from "@mongez/reinforcements";
 import { environment, rootPath } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";

@@ -1,9 +1,13 @@
 import { type ChildModel, Model, type ModelSchema } from "@warlock.js/cascade";
+import type { Authenticable } from "../contracts/auth-contract";
 import type { AccessTokenOutput, DeviceInfo, TokenPair } from "../contracts/types";
 import { authService } from "../services";
 import type { RefreshToken } from "./refresh-token/refresh-token.model";
 
-export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Model<Schema> {
+export abstract class Auth<Schema extends ModelSchema = ModelSchema>
+  extends Model<Schema>
+  implements Authenticable
+{
   /**
    * Get user type
    */
@@ -33,7 +37,7 @@ export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Mod
   /**
    * Generate refresh token
    */
-  public async generateRefreshToken(deviceInfo?: DeviceInfo): Promise<RefreshToken> {
+  public async generateRefreshToken(deviceInfo?: DeviceInfo): Promise<RefreshToken | undefined> {
     return authService.createRefreshToken(this, deviceInfo);
   }
 
@@ -83,6 +87,6 @@ export abstract class Auth<Schema extends ModelSchema = ModelSchema> extends Mod
    * Confirm password
    */
   public async confirmPassword(password: string): Promise<boolean> {
-    return authService.verifyPassword(this.string("password")!, password);
+    return authService.verifyPassword(password, this.string("password")!);
   }
 }

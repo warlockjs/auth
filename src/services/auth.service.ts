@@ -1,11 +1,11 @@
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
 import { config, hashPassword, verifyPassword } from "@warlock.js/core";
+import ms from "ms";
 import type { AccessTokenOutput, DeviceInfo, LoginResult, TokenPair } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
-import { toJwtExpiresIn } from "../utils/duration";
 import { authEvents } from "./auth-events";
 import { jwt } from "./jwt";
 
@@ -27,7 +27,7 @@ class AuthService {
   public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
     const expiresInConfig = config.key("auth.jwt.expiresIn");
-    const expiresIn = toJwtExpiresIn(expiresInConfig, 3_600); // default 1 hour
+    const expiresIn = expiresInConfig ? ms(expiresInConfig) : 3_600; // default 1 hour
 
     // If expiresIn is undefined, token never expires
     const token = await jwt.generate(data, { expiresIn });
@@ -47,7 +47,12 @@ class AuthService {
   /**
    * Create refresh token for user
    */
-  public async createRefreshToken(user: Auth, deviceInfo?: DeviceInfo): Promise<RefreshToken> {
+  public async createRefreshToken(
+    user: Auth,
+    deviceInfo?: DeviceInfo,
+  ): Promise<RefreshToken | undefined> {
+    if (config.get("auth.jwt.refresh.enabled") === false) return;
+
     const familyId = deviceInfo?.familyId || Random.string(32);
 
     const payload = {
@@ -56,12 +61,14 @@ class AuthService {
       familyId,
     };
 
-    const token = await jwt.generateRefreshToken(payload);
+    const epireTime = config.get("auth.jwt.refresh.expiresIn", "7d");
 
-    const decoed = await jwt.verifyRefreshToken(token);
+    const expiresIn = ms(epireTime);
+
+    const token = await jwt.generateRefreshToken(payload, { expiresIn });
 
     // Calculate expiration date (undefined means never expires, but we still set a far future date)
-    const expiresAt = new Date(decoed.exp * 1_000).toISOString();
+    const expiresAt = new Date(Date.now() + expiresIn).toISOString();
 
     // Enforce max tokens per user
     await this.enforceMaxRefreshTokens(user);
@@ -92,15 +99,20 @@ class AuthService {
 
     const tokenPair: TokenPair = {
       accessToken,
-      refreshToken: {
-        token: refreshToken.get("token"),
-        expiresAt: refreshToken.get("expires_at"),
-      },
+      refreshToken: refreshToken
+        ? {
+            token: refreshToken.get("token"),
+            expiresAt: refreshToken.get("expires_at"),
+          }
+        : undefined,
     };
 
     // Emit events
     authEvents.emit("token.created", user, tokenPair);
-    authEvents.emit("session.created", user, refreshToken, deviceInfo);
+
+    if (refreshToken) {
+      authEvents.emit("session.created", user, refreshToken, deviceInfo);
+    }
 
     return tokenPair;
   }
