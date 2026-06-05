@@ -190,14 +190,15 @@ describe("authService.generateAccessToken", () => {
     expect(result.expiresAt).toBe(new Date(1_700_000_000 * 1_000).toISOString());
   });
 
-  it("uses the default 3600s expiry when auth.jwt.expiresIn is unset", async () => {
+  it("uses the default 1h expiry when auth.jwt.expiresIn is unset", async () => {
     configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.expiresIn" ? undefined : fallback,
     );
 
     await authService.generateAccessToken(buildUser());
 
-    expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 3_600 });
+    // ms("1h") === 3_600_000 (fast-jwt treats a numeric expiresIn as milliseconds)
+    expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 3_600_000 });
   });
 
   it("converts a configured expiresIn string through `ms`", async () => {
@@ -612,7 +613,7 @@ describe("authService.logout", () => {
 
     expect(accessTokenDelete).toHaveBeenCalledWith({
       token: "the-access-token",
-      userId: 8,
+      user_id: 8,
     });
     expect(emit).toHaveBeenCalledWith("logout", user);
   });
@@ -626,7 +627,7 @@ describe("authService.logout", () => {
 
     expect(refreshTokenFirst).toHaveBeenCalledWith({
       token: "the-refresh-token",
-      userId: 8,
+      user_id: 8,
     });
     expect(row.revoke).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledWith("session.destroyed", user, row);
@@ -763,10 +764,10 @@ describe("authService.getActiveSessions", () => {
 });
 
 describe("authService token removal helpers", () => {
-  it("removeAccessToken deletes by token + userId", async () => {
+  it("removeAccessToken deletes by token + user_id", async () => {
     await authService.removeAccessToken(buildUser({ id: 11 }), "tok");
 
-    expect(accessTokenDelete).toHaveBeenCalledWith({ token: "tok", userId: 11 });
+    expect(accessTokenDelete).toHaveBeenCalledWith({ token: "tok", user_id: 11 });
   });
 
   it("removeAllAccessTokens deletes by user_id", async () => {
@@ -775,9 +776,9 @@ describe("authService token removal helpers", () => {
     expect(accessTokenDelete).toHaveBeenCalledWith({ user_id: 11 });
   });
 
-  it("removeRefreshToken deletes by token + userId", async () => {
+  it("removeRefreshToken deletes by token + user_id", async () => {
     await authService.removeRefreshToken(buildUser({ id: 11 }), "rtok");
 
-    expect(refreshTokenDelete).toHaveBeenCalledWith({ token: "rtok", userId: 11 });
+    expect(refreshTokenDelete).toHaveBeenCalledWith({ token: "rtok", user_id: 11 });
   });
 });

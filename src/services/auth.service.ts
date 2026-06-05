@@ -27,7 +27,7 @@ class AuthService {
   public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
     const expiresInConfig = config.key("auth.jwt.expiresIn");
-    const expiresIn = expiresInConfig ? ms(expiresInConfig) : 3_600; // default 1 hour
+    const expiresIn = expiresInConfig ? ms(expiresInConfig) : ms("1h"); // default 1 hour
 
     // If expiresIn is undefined, token never expires
     const token = await jwt.generate(data, { expiresIn });
@@ -261,7 +261,7 @@ class AuthService {
       // Revoke specific refresh token
       const token = await RefreshToken.first({
         token: refreshToken,
-        userId: user.id, // Security: ensure token belongs to this user
+        user_id: user.id, // Security: ensure token belongs to this user
       });
 
       if (token) {
@@ -291,9 +291,9 @@ class AuthService {
    * Remove specific access token
    */
   public async removeAccessToken(user: Auth, token: string): Promise<void> {
-    AccessToken.delete({
+    await AccessToken.delete({
       token,
-      userId: user.id,
+      user_id: user.id,
     });
   }
 
@@ -302,7 +302,7 @@ class AuthService {
    */
   public async removeAllAccessTokens(user: Auth): Promise<void> {
     // Delete access token
-    AccessToken.delete({
+    await AccessToken.delete({
       user_id: user.id,
     });
   }
@@ -311,9 +311,9 @@ class AuthService {
    * Remove specific refresh token
    */
   public async removeRefreshToken(user: Auth, token: string): Promise<void> {
-    RefreshToken.delete({
+    await RefreshToken.delete({
       token,
-      userId: user.id,
+      user_id: user.id,
     });
   }
 

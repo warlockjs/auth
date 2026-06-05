@@ -33,7 +33,7 @@ export async function generateJWTSecret() {
   let secretsToAdd = "";
 
   if (!hasJwtSecret) {
-    const jwtSecret = Random.string(32);
+    const jwtSecret = Random.token(32);
     secretsToAdd += `
 # JWT Secret
 JWT_SECRET=${jwtSecret}
@@ -44,7 +44,7 @@ JWT_SECRET=${jwtSecret}
   }
 
   if (!hasJwtRefreshSecret) {
-    const jwtRefreshSecret = Random.string(32);
+    const jwtRefreshSecret = Random.token(32);
     secretsToAdd += `
 # JWT Refresh Secret
 JWT_REFRESH_SECRET=${jwtRefreshSecret}

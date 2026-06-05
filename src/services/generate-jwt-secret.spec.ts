@@ -5,6 +5,7 @@ const getFileAsync = vi.fn();
 const putFileAsync = vi.fn();
 const rootPath = vi.fn((file: string) => `/root/${file}`);
 const environment = vi.fn(() => "development");
+const randomToken = vi.fn(() => "GENERATED_SECRET");
 
 vi.mock("@warlock.js/fs", () => ({
   fileExistsAsync: (...args: unknown[]) => fileExistsAsync(...args),
@@ -22,7 +23,7 @@ vi.mock("@warlock.js/logger", () => ({
 }));
 
 vi.mock("@mongez/reinforcements", () => ({
-  Random: { string: vi.fn(() => "GENERATED_SECRET") },
+  Random: { token: (...args: unknown[]) => randomToken(...args) },
 }));
 
 import { generateJWTSecret } from "./generate-jwt-secret";
@@ -79,6 +80,8 @@ describe("generateJWTSecret", () => {
     expect(written).toContain("JWT_REFRESH_SECRET=GENERATED_SECRET");
     // original contents are preserved
     expect(written).toContain("APP_NAME=demo");
+    // secrets must come from the crypto-backed Random.token, not Math.random()-backed Random.string
+    expect(randomToken).toHaveBeenCalledTimes(2);
   });
 
   it("adds only the refresh secret when JWT_SECRET already exists", async () => {
