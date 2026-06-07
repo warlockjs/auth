@@ -100,18 +100,6 @@ export type AuthConfigurations = {
       logoutWithoutToken?: LogoutWithoutTokenBehavior;
     };
   };
-  /**
-   * Password configurations
-   */
-  password?: {
-    /**
-     * Password salt
-     * The higher the salt, the more secure the password is
-     * But, it will take more time to generate the password
-     * @default 12
-     */
-    salt?: number;
-  };
 };
 
 export type AccessTokenOutput = {

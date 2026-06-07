@@ -53,7 +53,7 @@ export function authMiddleware(allowedUserType: string | string[]) {
       }
 
       // now, we need to get an instance of user using its corresponding model
-      const userType = user.userType || accessToken.get("userType");
+      const userType = user.userType || accessToken.get("user_type");
 
       // check if the user type is allowed
       if (allowedTypes.length && !allowedTypes.includes(userType)) {

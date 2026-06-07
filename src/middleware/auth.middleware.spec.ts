@@ -45,7 +45,7 @@ function stubAuthenticatedUser(userType: string) {
   jwtVerify.mockResolvedValue({ id: 1, userType });
 
   accessTokenFirst.mockResolvedValue({
-    get: (key: string) => (key === "userType" ? userType : undefined),
+    get: (key: string) => (key === "user_type" ? userType : undefined),
   });
 
   configKey.mockReturnValue({ find: vi.fn().mockResolvedValue({ id: 1, userType }) });
@@ -134,7 +134,7 @@ describe("authMiddleware", () => {
     const destroy = vi.fn();
 
     accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "userType" ? "user" : undefined),
+      get: (key: string) => (key === "user_type" ? "user" : undefined),
       destroy,
     });
 
@@ -171,7 +171,7 @@ describe("authMiddleware", () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "ghost" });
 
     accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "userType" ? "ghost" : undefined),
+      get: (key: string) => (key === "user_type" ? "ghost" : undefined),
     });
 
     configKey.mockReturnValue(undefined);
@@ -192,7 +192,7 @@ describe("authMiddleware", () => {
     jwtVerify.mockResolvedValue({ id: 1 });
 
     accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "userType" ? "admin" : undefined),
+      get: (key: string) => (key === "user_type" ? "admin" : undefined),
     });
 
     const find = vi.fn().mockResolvedValue({ id: 1, userType: "admin" });
@@ -214,7 +214,7 @@ describe("authMiddleware", () => {
     const decoded = { id: 9, userType: "user" };
     jwtVerify.mockResolvedValue(decoded);
     accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "userType" ? "user" : undefined),
+      get: (key: string) => (key === "user_type" ? "user" : undefined),
     });
     configKey.mockReturnValue({ find: vi.fn().mockResolvedValue({ id: 9, userType: "user" }) });
 

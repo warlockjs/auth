@@ -16,6 +16,7 @@
     "@mongez/events": "^2.2.6",
     "@warlock.js/fs": "*",
     "@mongez/reinforcements": "^3.2.0",
+    "@warlock.js/cache": "*",
     "@warlock.js/cascade": "*",
     "@warlock.js/core": "*",
     "@warlock.js/logger": "*",

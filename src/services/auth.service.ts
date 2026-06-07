@@ -155,7 +155,21 @@ class AuthService {
       // 4. Rotate token if enabled (revoke old token)
       const rotationEnabled = config.key("auth.jwt.refresh.rotation", true);
       if (rotationEnabled) {
-        await refreshToken.revoke();
+        // Conditional revoke — flips `revoked_at` only when it is still NULL.
+        // `revokedCount === 0` means a concurrent rotation already won the
+        // race (reuse / replay), so revoke the whole family and reject.
+        // Closes the race where both requests pass the in-memory `isValid`
+        // check above before either revoke lands.
+        const revokedCount = await RefreshToken.atomic(
+          { id: refreshToken.id, revoked_at: null },
+          { $set: { revoked_at: new Date() } },
+        );
+
+        if (revokedCount === 0) {
+          await this.revokeTokenFamily(refreshToken.get("family_id"));
+
+          return null;
+        }
       } else {
         await refreshToken.markAsUsed();
       }

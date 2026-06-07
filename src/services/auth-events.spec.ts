@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@warlock.js/logger", () => ({
+  log: { error: vi.fn() },
+}));
+
+import { log } from "@warlock.js/logger";
 import { authEvents } from "./auth-events";
 
 afterEach(() => {
@@ -78,5 +84,15 @@ describe("authEvents", () => {
     authEvents.emit("cleanup.completed", 1);
 
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("isolates a throwing listener — emit logs and does not rethrow", () => {
+    authEvents.on("login.success", () => {
+      throw new Error("listener boom");
+    });
+
+    // a throwing listener must not break the auth flow that emitted the event
+    expect(() => authEvents.emit("login.success", {} as never, {} as never)).not.toThrow();
+    expect(log.error).toHaveBeenCalled();
   });
 });

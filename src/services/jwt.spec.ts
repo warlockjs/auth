@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createSigner } from "fast-jwt";
 
 const configKey = vi.fn();
 
@@ -154,10 +155,10 @@ describe("jwt", () => {
       expect(decoded.userId).toBe(7);
       expect(decoded.familyId).toBe("fam-1");
 
-      // signed with the main secret → the access-secret verifier accepts it too
-      const decodedWithAccessSecret = await jwt.verify<{ userId: number }>(token);
-
-      expect(decodedWithAccessSecret.userId).toBe(7);
+      // Even though the shared secret would let the signature validate, the
+      // tokenType claim keeps the classes separate: the access verifier rejects
+      // a refresh token.
+      await expect(jwt.verify(token)).rejects.toThrow();
     });
 
     it("can verify refresh tokens with an explicit key override", async () => {
@@ -167,6 +168,26 @@ describe("jwt", () => {
       const decoded = await jwt.verifyRefreshToken<{ userId: number }>(token, { key: customKey });
 
       expect(decoded.userId).toBe(7);
+    });
+  });
+
+  describe("token-class separation", () => {
+    it("rejects an access token at the refresh verifier even under a shared secret", async () => {
+      stubConfig({ "auth.jwt.refresh.secret": undefined });
+
+      const accessToken = await jwt.generate({ id: 7 });
+
+      await expect(jwt.verifyRefreshToken(accessToken)).rejects.toThrow();
+    });
+
+    it("accepts a legacy token that carries no tokenType claim (backward compatible)", async () => {
+      // a token minted before tokenType stamping has no tokenType claim
+      const sign = createSigner({ key: ACCESS_SECRET, algorithm: "HS256" });
+      const legacyToken = await sign({ id: 7 });
+
+      const decoded = await jwt.verify<{ id: number }>(legacyToken);
+
+      expect(decoded.id).toBe(7);
     });
   });
 });

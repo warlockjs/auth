@@ -1,4 +1,5 @@
 import events, { type EventSubscription } from "@mongez/events";
+import { log } from "@warlock.js/logger";
 import type { DeviceInfo, TokenPair } from "../contracts/types";
 import type { Auth } from "../models/auth.model";
 import type { RefreshToken } from "../models/refresh-token";
@@ -91,7 +92,16 @@ export const authEvents = {
    * Emit an auth event
    */
   emit<T extends AuthEventName>(event: T, ...args: AuthEventPayloads[T]): void {
-    events.trigger(AUTH_EVENT_PREFIX + event, ...args);
+    try {
+      events.trigger(AUTH_EVENT_PREFIX + event, ...args);
+    } catch (error) {
+      // Auth events are fire-and-forget notifications: a throwing listener must
+      // never break the flow that emitted it (e.g. turn a completed login into a
+      // 500). Log and swallow. NOTE: this guards synchronous listener throws;
+      // async listener rejections and "later listeners still run" need a fix in
+      // @mongez/events (tracked separately).
+      log.error("auth", "event", error);
+    }
   },
 
   /**

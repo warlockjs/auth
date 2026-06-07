@@ -14,4 +14,10 @@ export enum AuthErrorCodes {
    * EC003 = Unauthorized
    */
   Unauthorized = "EC003", // Error Code 003
+  /**
+   * Too Many Attempts Error Code EC004
+   * EC004 = Too Many Attempts — issued by the login-throttle middleware once
+   * a per-account or per-IP failure counter trips its threshold.
+   */
+  TooManyAttempts = "EC004", // Error Code 004
 }

@@ -30,6 +30,7 @@ const refreshTokenCreate = vi.fn();
 const refreshTokenFirst = vi.fn();
 const refreshTokenDelete = vi.fn();
 const refreshTokenQuery = vi.fn();
+const refreshTokenAtomic = vi.fn();
 
 vi.mock("../models/refresh-token", () => ({
   RefreshToken: {
@@ -37,6 +38,7 @@ vi.mock("../models/refresh-token", () => ({
     first: (...args: unknown[]) => refreshTokenFirst(...args),
     delete: (...args: unknown[]) => refreshTokenDelete(...args),
     query: (...args: unknown[]) => refreshTokenQuery(...args),
+    atomic: (...args: unknown[]) => refreshTokenAtomic(...args),
   },
 }));
 
@@ -85,6 +87,7 @@ function buildUser(overrides: Record<string, unknown> = {}) {
  */
 function buildRefreshTokenRow(fields: Record<string, unknown>, isValid = true) {
   return {
+    id: (fields.id as string) ?? "rt-id",
     isValid,
     get: (key: string) => fields[key],
     revoke: vi.fn().mockResolvedValue(undefined),
@@ -113,6 +116,9 @@ beforeEach(() => {
   configGet.mockImplementation((_key: string, fallback?: unknown) => fallback);
 
   vi.mocked(Random.string).mockReturnValue("random-family-id");
+
+  // rotation: the atomic conditional revoke wins (modifiedCount 1) by default
+  refreshTokenAtomic.mockResolvedValue(1);
 });
 
 afterEach(() => {
@@ -449,7 +455,12 @@ describe("authService.refreshTokens", () => {
 
     const result = await authService.refreshTokens("valid-token");
 
-    expect(oldRow.revoke).toHaveBeenCalledOnce();
+    // rotation now uses an atomic conditional revoke (revoke-if-still-active),
+    // not the row's unconditional revoke()
+    expect(refreshTokenAtomic).toHaveBeenCalledWith(
+      { id: oldRow.id, revoked_at: null },
+      { $set: { revoked_at: expect.any(Date) } },
+    );
     expect(oldRow.markAsUsed).not.toHaveBeenCalled();
     expect(result).not.toBeNull();
     expect(result?.accessToken.token).toBe("signed-access-token");
@@ -477,7 +488,33 @@ describe("authService.refreshTokens", () => {
 
     expect(oldRow.markAsUsed).toHaveBeenCalledOnce();
     expect(oldRow.revoke).not.toHaveBeenCalled();
+    // with rotation off there is no atomic revoke either — markAsUsed is the
+    // only state change
+    expect(refreshTokenAtomic).not.toHaveBeenCalled();
     expect(result).not.toBeNull();
+  });
+
+  it("rejects and revokes the family when the atomic revoke loses the race (concurrent reuse)", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+
+    const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    refreshTokenFirst.mockResolvedValue(oldRow);
+    // a concurrent rotation already flipped revoked_at -> modifiedCount 0
+    refreshTokenAtomic.mockResolvedValue(0);
+    refreshTokenQuery.mockReturnValue(buildQuery([])); // revokeTokenFamily query
+
+    const user = buildUser();
+    const UserModel = { find: vi.fn().mockResolvedValue(user) };
+    configKey.mockImplementation((key: string, fallback?: unknown) => {
+      if (key === "auth.userType.user") return UserModel;
+      if (key === "auth.jwt.refresh.rotation") return true;
+      return fallback;
+    });
+
+    const result = await authService.refreshTokens("valid-token");
+
+    expect(result).toBeNull();
+    expect(refreshTokenCreate).not.toHaveBeenCalled(); // no new pair issued
   });
 
   it("reuses the same family_id for the rotated pair", async () => {
