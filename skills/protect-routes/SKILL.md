@@ -103,3 +103,4 @@ The middleware uses the framework's `response.unauthorized({...})` shape. To ove
 
 - [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) — config and multi-user-type semantics
 - [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — where the access token gets issued in the first place
+- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — brute-force throttle to stack in front of the login route

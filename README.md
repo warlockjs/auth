@@ -1,37 +1,52 @@
 # Warlock Auth
 
-Auth System for Warlock.js
+JWT authentication for [Warlock.js](https://github.com/warlockjs/core) applications — a base `Auth` model your user types extend, an `authMiddleware` route gate, an `authService` for login / logout / refresh (with refresh-token rotation + replay detection), persisted access + refresh tokens, multi-user-type support, lifecycle events, brute-force throttling, and two CLI commands.
 
 ## Installation
 
-`yarn create @warlock.js/auth`
+```bash
+yarn add @warlock.js/auth
+```
 
-Or
+`@warlock.js/auth` is coupled to `@warlock.js/core` — install it inside a Warlock project.
 
-`npx create @warlock.js/auth`
+## Documentation
 
-Or
+Task-focused guides live under [`skills/`](./skills):
 
-`pnpm create @warlock.js/auth`
+- **overview** — what the package does and when to reach for it
+- **auth-basics** — the `Auth` model, middleware, and service
+- **handle-login-and-logout** — issue and revoke tokens
+- **register-user** — sign up + first token pair
+- **protect-routes** — gate routes with `authMiddleware`
+- **manage-tokens** — the full token lifecycle (rotation, revocation, cleanup)
+- **customize-user-type** — multiple user types in one system
+- **throttle-login-attempts** — brute-force protection via `loginThrottleMiddleware`
+- **run-auth-commands** — the bundled CLI commands
 
-## Generate JWT Secret
+## Generate the JWT secret
 
-To generate JWT secret key, we need to add the following code to the `warlock.config.ts` file.
+Register the command in `warlock.config.ts`:
 
 ```ts
 import { registerJWTSecretGeneratorCommand } from "@warlock.js/auth";
 import { defineConfig } from "@warlock.js/core";
 
 export default defineConfig({
-  // Other configurations
   cli: {
     commands: [registerJWTSecretGeneratorCommand()],
   },
 });
 ```
 
-Then run the following command:
+Then run:
 
-`warlock jwt.generate`
+```bash
+warlock jwt.generate
+```
 
-It will generate 
+It generates cryptographically-strong `JWT_SECRET` and `JWT_REFRESH_SECRET` values and writes them to your `.env` file. Existing values are left untouched, so it's safe to re-run.
+
+## License
+
+MIT © Hasan Zohdy
