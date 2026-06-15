@@ -51,10 +51,15 @@ export default {
     // staff: Staff,
     // client: Client,
   },
-  jwt: {
+  accessToken: {
     secret: env("JWT_SECRET"),
     expiresIn: "1h",
-    refresh: { enabled: true, expiresIn: "30d", rotation: true },
+  },
+  refreshToken: {
+    secret: env("JWT_REFRESH_SECRET"),
+    enabled: true,
+    expiresIn: "30d",
+    rotation: true,
   },
 };
 ```

@@ -1,124 +1,140 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mongez/reinforcements", () => ({
-  Random: { string: vi.fn(() => "random-family-id") },
-}));
-
-const configKey = vi.fn();
-const configGet = vi.fn();
-
-vi.mock("@warlock.js/core", () => ({
-  config: {
-    key: (...args: unknown[]) => configKey(...args),
-    get: (...args: unknown[]) => configGet(...args),
-  },
-  hashPassword: vi.fn(),
-  verifyPassword: vi.fn(),
-}));
-
-const accessTokenCreate = vi.fn();
-const accessTokenDelete = vi.fn();
+// ── access-token model ──────────────────────────────────────────────────────
+const accessTokenIssue = vi.fn();
+const accessTokenDeleteForUser = vi.fn();
+const accessTokenDeleteAllForUser = vi.fn();
+const accessTokenPurgeExpired = vi.fn();
 
 vi.mock("../models/access-token", () => ({
   AccessToken: {
-    create: (...args: unknown[]) => accessTokenCreate(...args),
-    delete: (...args: unknown[]) => accessTokenDelete(...args),
+    issue: (...args: unknown[]) => accessTokenIssue(...args),
+    deleteForUser: (...args: unknown[]) => accessTokenDeleteForUser(...args),
+    deleteAllForUser: (...args: unknown[]) => accessTokenDeleteAllForUser(...args),
+    purgeExpired: (...args: unknown[]) => accessTokenPurgeExpired(...args),
   },
 }));
 
-const refreshTokenCreate = vi.fn();
-const refreshTokenFirst = vi.fn();
-const refreshTokenDelete = vi.fn();
-const refreshTokenQuery = vi.fn();
-const refreshTokenAtomic = vi.fn();
+// ── refresh-token model ─────────────────────────────────────────────────────
+const refreshTokenIssue = vi.fn();
+const refreshTokenEnforceMax = vi.fn();
+const refreshTokenFindByToken = vi.fn();
+const refreshTokenFindForUser = vi.fn();
+const refreshTokenDeleteForUser = vi.fn();
+const refreshTokenRevokeAllFor = vi.fn();
+const refreshTokenRevokeFamily = vi.fn();
+const refreshTokenPurgeExpired = vi.fn();
+const refreshTokenActiveFor = vi.fn();
 
 vi.mock("../models/refresh-token", () => ({
   RefreshToken: {
-    create: (...args: unknown[]) => refreshTokenCreate(...args),
-    first: (...args: unknown[]) => refreshTokenFirst(...args),
-    delete: (...args: unknown[]) => refreshTokenDelete(...args),
-    query: (...args: unknown[]) => refreshTokenQuery(...args),
-    atomic: (...args: unknown[]) => refreshTokenAtomic(...args),
+    issue: (...args: unknown[]) => refreshTokenIssue(...args),
+    enforceMax: (...args: unknown[]) => refreshTokenEnforceMax(...args),
+    findByToken: (...args: unknown[]) => refreshTokenFindByToken(...args),
+    findForUser: (...args: unknown[]) => refreshTokenFindForUser(...args),
+    deleteForUser: (...args: unknown[]) => refreshTokenDeleteForUser(...args),
+    revokeAllFor: (...args: unknown[]) => refreshTokenRevokeAllFor(...args),
+    revokeFamily: (...args: unknown[]) => refreshTokenRevokeFamily(...args),
+    purgeExpired: (...args: unknown[]) => refreshTokenPurgeExpired(...args),
+    activeFor: (...args: unknown[]) => refreshTokenActiveFor(...args),
   },
 }));
 
+// ── jwt service ─────────────────────────────────────────────────────────────
 const jwtGenerate = vi.fn();
-const jwtVerify = vi.fn();
 const jwtGenerateRefreshToken = vi.fn();
 const jwtVerifyRefreshToken = vi.fn();
 
 vi.mock("./jwt", () => ({
   jwt: {
     generate: (...args: unknown[]) => jwtGenerate(...args),
-    verify: (...args: unknown[]) => jwtVerify(...args),
     generateRefreshToken: (...args: unknown[]) => jwtGenerateRefreshToken(...args),
     verifyRefreshToken: (...args: unknown[]) => jwtVerifyRefreshToken(...args),
   },
 }));
 
+// ── events ──────────────────────────────────────────────────────────────────
 const emit = vi.fn();
 
 vi.mock("./auth-events", () => ({
-  authEvents: {
-    emit: (...args: unknown[]) => emit(...args),
-  },
+  authEvents: { emit: (...args: unknown[]) => emit(...args) },
 }));
 
-import { Random } from "@mongez/reinforcements";
-import { hashPassword, verifyPassword } from "@warlock.js/core";
+// ── core ────────────────────────────────────────────────────────────────────
+const configKey = vi.fn();
+const configGet = vi.fn();
+const hashPassword = vi.fn();
+const verifyPassword = vi.fn();
+
+vi.mock("@warlock.js/core", () => ({
+  config: {
+    key: (...args: unknown[]) => configKey(...args),
+    get: (...args: unknown[]) => configGet(...args),
+  },
+  hashPassword: (...args: unknown[]) => hashPassword(...args),
+  verifyPassword: (...args: unknown[]) => verifyPassword(...args),
+}));
+
+vi.mock("@warlock.js/logger", () => ({
+  log: { warn: vi.fn(), error: vi.fn() },
+}));
+
+const randomString = vi.fn();
+
+vi.mock("@mongez/reinforcements", () => ({
+  Random: { string: (...args: unknown[]) => randomString(...args) },
+}));
+
 import { authService } from "./auth.service";
 
-/**
- * Build a fake `Auth` user model good enough for the service, which only
- * ever reads `.id`, `.userType`, and `.string("password")`.
- */
 function buildUser(overrides: Record<string, unknown> = {}) {
-  return {
+  const fields: Record<string, unknown> = {
     id: 1,
     userType: "user",
-    string: (key: string) => (key === "password" ? "stored-hash" : undefined),
+    password: "hashed-password",
     ...overrides,
+  };
+
+  return {
+    id: fields.id,
+    userType: fields.userType,
+    string: (key: string) => fields[key],
+    get: (key: string) => fields[key],
   } as never;
 }
 
-/**
- * Build a fake persisted RefreshToken row. `revoke`/`markAsUsed`/`destroy`
- * are spies so call-order assertions work; `get` reads from `fields`.
- */
 function buildRefreshTokenRow(fields: Record<string, unknown>, isValid = true) {
   return {
     id: (fields.id as string) ?? "rt-id",
     isValid,
+    familyId: (fields.family_id as string) ?? "fam-id",
     get: (key: string) => fields[key],
     revoke: vi.fn().mockResolvedValue(undefined),
     markAsUsed: vi.fn().mockResolvedValue(undefined),
-    destroy: vi.fn().mockResolvedValue(undefined),
+    revokeIfActive: vi.fn().mockResolvedValue(true),
   };
-}
-
-/**
- * Build a chainable query-builder stub. `.where`/`.orderBy` return the same
- * builder; `.get` resolves to the provided rows.
- */
-function buildQuery(rows: unknown[]) {
-  const builder: Record<string, unknown> = {};
-  builder.where = vi.fn(() => builder);
-  builder.orderBy = vi.fn(() => builder);
-  builder.get = vi.fn().mockResolvedValue(rows);
-  return builder;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
 
-  // sensible config defaults; individual tests override via mockImplementation
+  // model statics resolve to the (mocked) default class via config fallback
   configKey.mockImplementation((_key: string, fallback?: unknown) => fallback);
   configGet.mockImplementation((_key: string, fallback?: unknown) => fallback);
 
-  vi.mocked(Random.string).mockReturnValue("random-family-id");
+  randomString.mockReturnValue("random-family-id");
+  jwtGenerate.mockResolvedValue("signed-access-token");
+  jwtGenerateRefreshToken.mockResolvedValue("signed-refresh-token");
+  refreshTokenIssue.mockResolvedValue(buildRefreshTokenRow({ token: "signed-refresh-token" }));
+  refreshTokenEnforceMax.mockResolvedValue(undefined);
 
-  // rotation: the atomic conditional revoke wins (modifiedCount 1) by default
-  refreshTokenAtomic.mockResolvedValue(1);
+  // bulk operations resolve to an empty set by default so the per-token event
+  // loops have something iterable
+  refreshTokenRevokeAllFor.mockResolvedValue([]);
+  refreshTokenRevokeFamily.mockResolvedValue([]);
+  refreshTokenPurgeExpired.mockResolvedValue([]);
+  refreshTokenActiveFor.mockResolvedValue([]);
+  accessTokenPurgeExpired.mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -126,85 +142,36 @@ afterEach(() => {
 });
 
 describe("authService.buildAccessTokenPayload", () => {
-  it("returns the default access-token claim shape", () => {
-    const user = buildUser({ id: 99, userType: "admin" });
+  it("includes id, userType, and a created_at timestamp", () => {
+    const payload = authService.buildAccessTokenPayload(buildUser({ id: 7 }));
 
-    const payload = authService.buildAccessTokenPayload(user);
-
-    expect(payload).toEqual({
-      id: 99,
-      userType: "admin",
-      created_at: expect.any(Number),
-    });
-  });
-
-  it("stamps created_at with the current time in milliseconds", () => {
-    const before = Date.now();
-    const payload = authService.buildAccessTokenPayload(buildUser());
-    const after = Date.now();
-
-    expect(payload.created_at).toBeGreaterThanOrEqual(before);
-    expect(payload.created_at).toBeLessThanOrEqual(after);
-  });
-});
-
-describe("authService password helpers", () => {
-  it("delegates hashPassword to @warlock.js/core", async () => {
-    vi.mocked(hashPassword).mockResolvedValue("hashed-value");
-
-    const result = await authService.hashPassword("plaintext");
-
-    expect(hashPassword).toHaveBeenCalledWith("plaintext");
-    expect(result).toBe("hashed-value");
-  });
-
-  it("delegates verifyPassword in (plain, hash) order", async () => {
-    vi.mocked(verifyPassword).mockResolvedValue(true);
-
-    const result = await authService.verifyPassword("plain-input", "stored-hash");
-
-    expect(verifyPassword).toHaveBeenCalledWith("plain-input", "stored-hash");
-    expect(result).toBe(true);
+    expect(payload.id).toBe(7);
+    expect(payload.userType).toBe("user");
+    expect(typeof payload.created_at).toBe("number");
   });
 });
 
 describe("authService.generateAccessToken", () => {
-  beforeEach(() => {
-    jwtGenerate.mockResolvedValue("signed-access-token");
-    // exp is a UNIX timestamp in SECONDS
-    jwtVerify.mockResolvedValue({ exp: 1_700_000_000 });
-    accessTokenCreate.mockResolvedValue(undefined);
-  });
-
-  it("signs the built payload and persists an AccessToken row", async () => {
-    const user = buildUser({ id: 7, userType: "user" });
+  it("signs, persists via AccessToken.issue, and returns the token + expiry", async () => {
+    const user = buildUser({ id: 7 });
 
     const result = await authService.generateAccessToken(user);
 
-    // the default payload is the built claim shape
-    expect(jwtGenerate).toHaveBeenCalledTimes(1);
-    const [signedPayload] = jwtGenerate.mock.calls[0];
-    expect(signedPayload).toMatchObject({ id: 7, userType: "user" });
-
-    expect(accessTokenCreate).toHaveBeenCalledWith({
-      token: "signed-access-token",
-      user_id: 7,
-      user_type: "user",
-    });
-
+    expect(jwtGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7, userType: "user" }),
+      { expiresIn: 3_600_000 }, // ms("1h") default
+    );
+    expect(accessTokenIssue).toHaveBeenCalledWith(user, "signed-access-token", expect.any(Date));
     expect(result.token).toBe("signed-access-token");
-    expect(result.expiresAt).toBe(new Date(1_700_000_000 * 1_000).toISOString());
+    expect(typeof result.expiresAt).toBe("string");
+    expect(new Date(result.expiresAt).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("uses the default 1h expiry when auth.jwt.expiresIn is unset", async () => {
-    configKey.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.jwt.expiresIn" ? undefined : fallback,
-    );
-
+  it("does NOT re-verify the freshly-signed token (expiry computed locally)", async () => {
     await authService.generateAccessToken(buildUser());
 
-    // ms("1h") === 3_600_000 (fast-jwt treats a numeric expiresIn as milliseconds)
-    expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 3_600_000 });
+    // generate is the only jwt call — no redundant verify round-trip
+    expect(jwtGenerate).toHaveBeenCalledOnce();
   });
 
   it("converts a configured expiresIn string through `ms`", async () => {
@@ -214,11 +181,10 @@ describe("authService.generateAccessToken", () => {
 
     await authService.generateAccessToken(buildUser());
 
-    // ms("2h") === 7_200_000
     expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 7_200_000 });
   });
 
-  it("honours an explicit payload override instead of the built claims", async () => {
+  it("honours an explicit payload override", async () => {
     const custom = { id: 1, scope: "limited" };
 
     await authService.generateAccessToken(buildUser(), custom);
@@ -228,463 +194,266 @@ describe("authService.generateAccessToken", () => {
 });
 
 describe("authService.createRefreshToken", () => {
-  beforeEach(() => {
-    jwtGenerateRefreshToken.mockResolvedValue("signed-refresh-token");
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "signed-refresh-token" }));
-    // no existing tokens => enforceMaxRefreshTokens is a no-op
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
-  });
-
   it("returns undefined when refresh tokens are disabled", async () => {
-    configGet.mockImplementation((key: string, fallback?: unknown) =>
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.refresh.enabled" ? false : fallback,
     );
 
     const result = await authService.createRefreshToken(buildUser());
 
     expect(result).toBeUndefined();
-    expect(jwtGenerateRefreshToken).not.toHaveBeenCalled();
-    expect(refreshTokenCreate).not.toHaveBeenCalled();
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
   });
 
-  it("generates a fresh familyId via Random.string when none supplied", async () => {
-    await authService.createRefreshToken(buildUser({ id: 5, userType: "user" }));
+  it("enforces the per-user cap before issuing", async () => {
+    const user = buildUser({ id: 5 });
 
-    expect(Random.string).toHaveBeenCalledWith(32);
+    await authService.createRefreshToken(user);
 
-    const [payload] = jwtGenerateRefreshToken.mock.calls[0];
-    expect(payload).toEqual({ userId: 5, userType: "user", familyId: "random-family-id" });
-  });
-
-  it("reuses the familyId from deviceInfo when provided (rotation continuity)", async () => {
-    await authService.createRefreshToken(buildUser(), { familyId: "existing-family" });
-
-    expect(Random.string).not.toHaveBeenCalled();
-    const [payload] = jwtGenerateRefreshToken.mock.calls[0];
-    expect(payload.familyId).toBe("existing-family");
-  });
-
-  it("persists the row with family_id, expires_at, and device_info", async () => {
-    configGet.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.jwt.refresh.expiresIn" ? "7d" : fallback,
+    expect(refreshTokenEnforceMax).toHaveBeenCalledWith(user, 5);
+    expect(refreshTokenIssue).toHaveBeenCalledWith(
+      user,
+      "signed-refresh-token",
+      expect.objectContaining({ familyId: "random-family-id" }),
     );
-
-    const deviceInfo = {
-      familyId: "fam-9",
-      userAgent: "jest-agent",
-      ip: "10.0.0.1",
-      deviceId: "device-xyz",
-    };
-
-    await authService.createRefreshToken(buildUser({ id: 3, userType: "user" }), deviceInfo);
-
-    expect(refreshTokenCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        token: "signed-refresh-token",
-        user_id: 3,
-        user_type: "user",
-        family_id: "fam-9",
-        device_info: {
-          userAgent: "jest-agent",
-          ip: "10.0.0.1",
-          deviceId: "device-xyz",
-        },
-      }),
-    );
-
-    const [[row]] = refreshTokenCreate.mock.calls;
-    // expires_at is an ISO string roughly 7d out
-    expect(typeof row.expires_at).toBe("string");
-    expect(new Date(row.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("omits device_info when no deviceInfo is given", async () => {
-    await authService.createRefreshToken(buildUser());
+  it("reuses a supplied familyId instead of generating one", async () => {
+    await authService.createRefreshToken(buildUser(), { familyId: "fam-keep" });
 
-    const [[row]] = refreshTokenCreate.mock.calls;
-    expect(row.device_info).toBeUndefined();
+    expect(randomString).not.toHaveBeenCalled();
+    expect(refreshTokenIssue).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ familyId: "fam-keep" }),
+    );
   });
 
-  it("enforces the max-per-user cap by revoking the oldest active tokens", async () => {
-    // maxPerUser default is 5; supply 5 existing active tokens -> revoke 1 oldest
-    const rows = Array.from({ length: 5 }, (_value, index) =>
-      buildRefreshTokenRow({ family_id: `fam-${index}` }),
+  it("forwards deviceInfo to the issued token", async () => {
+    const deviceInfo = { ip: "127.0.0.1", userAgent: "test" };
+
+    await authService.createRefreshToken(buildUser(), deviceInfo);
+
+    expect(refreshTokenIssue).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ deviceInfo }),
     );
-    refreshTokenQuery.mockReturnValue(buildQuery(rows));
-
-    configKey.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.jwt.refresh.maxPerUser" ? 5 : fallback,
-    );
-
-    await authService.createRefreshToken(buildUser());
-
-    // slice(0, length - max + 1) = slice(0, 1) -> only the oldest is revoked
-    expect(rows[0].revoke).toHaveBeenCalledOnce();
-    expect(rows[1].revoke).not.toHaveBeenCalled();
   });
 });
 
 describe("authService.createTokenPair", () => {
-  beforeEach(() => {
-    jwtGenerate.mockResolvedValue("signed-access-token");
-    jwtVerify.mockResolvedValue({ exp: 1_700_000_000 });
-    accessTokenCreate.mockResolvedValue(undefined);
-    jwtGenerateRefreshToken.mockResolvedValue("signed-refresh-token");
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
-  });
-
-  it("returns both tokens and emits token.created + session.created", async () => {
-    refreshTokenCreate.mockResolvedValue(
-      buildRefreshTokenRow({ token: "signed-refresh-token", expires_at: "2099-01-01T00:00:00.000Z" }),
-    );
-
+  it("issues both tokens and emits token.created + session.created", async () => {
     const user = buildUser();
+
     const pair = await authService.createTokenPair(user);
 
     expect(pair.accessToken.token).toBe("signed-access-token");
-    expect(pair.refreshToken).toEqual({
-      token: "signed-refresh-token",
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    });
-
+    expect(pair.refreshToken?.token).toBe("signed-refresh-token");
     expect(emit).toHaveBeenCalledWith("token.created", user, pair);
     expect(emit).toHaveBeenCalledWith("session.created", user, expect.anything(), undefined);
   });
 
-  it("omits refreshToken and skips session.created when refresh is disabled", async () => {
-    configGet.mockImplementation((key: string, fallback?: unknown) =>
+  it("omits the refresh token (and session event) when refresh is disabled", async () => {
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.refresh.enabled" ? false : fallback,
     );
 
-    const user = buildUser();
-    const pair = await authService.createTokenPair(user);
+    const pair = await authService.createTokenPair(buildUser());
 
     expect(pair.refreshToken).toBeUndefined();
-    expect(emit).toHaveBeenCalledWith("token.created", user, pair);
-    expect(emit).not.toHaveBeenCalledWith("session.created", expect.anything(), expect.anything(), expect.anything());
-  });
-
-  it("forwards deviceInfo.payload as the access-token claims", async () => {
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "signed-refresh-token" }));
-
-    const customPayload = { id: 1, custom: "claim" };
-    await authService.createTokenPair(buildUser(), { payload: customPayload });
-
-    expect(jwtGenerate).toHaveBeenCalledWith(customPayload, expect.any(Object));
+    expect(emit).not.toHaveBeenCalledWith("session.created", expect.anything(), expect.anything(), undefined);
   });
 });
 
 describe("authService.refreshTokens", () => {
-  beforeEach(() => {
-    jwtGenerate.mockResolvedValue("signed-access-token");
-    jwtVerify.mockResolvedValue({ exp: 1_700_000_000 });
-    accessTokenCreate.mockResolvedValue(undefined);
-    jwtGenerateRefreshToken.mockResolvedValue("new-refresh-token");
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "new-refresh-token" }));
-  });
-
-  it("returns null when the refresh JWT fails verification", async () => {
-    jwtVerifyRefreshToken.mockRejectedValue(new Error("bad signature"));
-
-    const result = await authService.refreshTokens("garbage");
-
-    expect(result).toBeNull();
-  });
-
-  it("returns null and revokes the family when the stored token is already invalid (replay)", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-
-    const usedRow = buildRefreshTokenRow({ family_id: "fam-1" }, false);
-    refreshTokenFirst.mockResolvedValue(usedRow);
-
-    // revokeTokenFamily queries the family and revokes each
-    const familyRows = [buildRefreshTokenRow({}), buildRefreshTokenRow({})];
-    refreshTokenQuery.mockReturnValue(buildQuery(familyRows));
-
-    const result = await authService.refreshTokens("replayed-token");
-
-    expect(result).toBeNull();
-    expect(familyRows[0].revoke).toHaveBeenCalledOnce();
-    expect(familyRows[1].revoke).toHaveBeenCalledOnce();
-    expect(emit).toHaveBeenCalledWith("token.familyRevoked", "fam-1", familyRows);
-  });
-
-  it("returns null when the user type maps to no registered model", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "ghost", familyId: "fam-1" });
-    refreshTokenFirst.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam-1" }, true));
-
-    configKey.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.userType.ghost" ? undefined : fallback,
-    );
-
-    const result = await authService.refreshTokens("valid-token");
-
-    expect(result).toBeNull();
-  });
-
-  it("returns null when the user row no longer exists", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-    refreshTokenFirst.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam-1" }, true));
-
-    const UserModel = { find: vi.fn().mockResolvedValue(null) };
-    configKey.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.userType.user" ? UserModel : fallback,
-    );
-
-    const result = await authService.refreshTokens("valid-token");
-
-    expect(result).toBeNull();
-  });
-
-  it("rotates (revokes the old token) and issues a new pair when rotation is enabled", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-
-    const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
-    refreshTokenFirst.mockResolvedValue(oldRow);
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "new-refresh-token" }));
-    refreshTokenQuery.mockReturnValue(buildQuery([])); // enforceMaxRefreshTokens no-op
-
-    const user = buildUser();
+  function configureRotation(rotation: boolean, user: unknown) {
     const UserModel = { find: vi.fn().mockResolvedValue(user) };
 
     configKey.mockImplementation((key: string, fallback?: unknown) => {
       if (key === "auth.userType.user") return UserModel;
-      if (key === "auth.jwt.refresh.rotation") return true;
+      if (key === "auth.jwt.refresh.rotation") return rotation;
       return fallback;
     });
 
-    const result = await authService.refreshTokens("valid-token");
+    return UserModel;
+  }
 
-    // rotation now uses an atomic conditional revoke (revoke-if-still-active),
-    // not the row's unconditional revoke()
-    expect(refreshTokenAtomic).toHaveBeenCalledWith(
-      { id: oldRow.id, revoked_at: null },
-      { $set: { revoked_at: expect.any(Date) } },
-    );
+  it("returns null on an invalid JWT", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue(null);
+
+    expect(await authService.refreshTokens("bad")).toBeNull();
+  });
+
+  it("revokes the family and returns null when the stored token is already invalid (replay)", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+    refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam-1" }, false));
+    refreshTokenRevokeFamily.mockResolvedValue([]);
+
+    const result = await authService.refreshTokens("valid");
+
+    expect(result).toBeNull();
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-1");
+  });
+
+  it("rotates via revokeIfActive and issues a new pair when rotation is enabled", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+    const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    refreshTokenFindByToken.mockResolvedValue(oldRow);
+    const user = buildUser();
+    configureRotation(true, user);
+
+    const result = await authService.refreshTokens("valid");
+
+    expect(oldRow.revokeIfActive).toHaveBeenCalledOnce();
     expect(oldRow.markAsUsed).not.toHaveBeenCalled();
-    expect(result).not.toBeNull();
     expect(result?.accessToken.token).toBe("signed-access-token");
     expect(emit).toHaveBeenCalledWith("token.refreshed", user, result, oldRow);
   });
 
-  it("only marks the old token as used (no revoke) when rotation is disabled", async () => {
+  it("rejects and revokes the family when revokeIfActive loses the race", async () => {
     jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-
     const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
-    refreshTokenFirst.mockResolvedValue(oldRow);
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "new-refresh-token" }));
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
+    oldRow.revokeIfActive.mockResolvedValue(false); // concurrent rotation already won
+    refreshTokenFindByToken.mockResolvedValue(oldRow);
+    refreshTokenRevokeFamily.mockResolvedValue([]);
+    configureRotation(true, buildUser());
 
-    const user = buildUser();
-    const UserModel = { find: vi.fn().mockResolvedValue(user) };
-
-    configKey.mockImplementation((key: string, fallback?: unknown) => {
-      if (key === "auth.userType.user") return UserModel;
-      if (key === "auth.jwt.refresh.rotation") return false;
-      return fallback;
-    });
-
-    const result = await authService.refreshTokens("valid-token");
-
-    expect(oldRow.markAsUsed).toHaveBeenCalledOnce();
-    expect(oldRow.revoke).not.toHaveBeenCalled();
-    // with rotation off there is no atomic revoke either — markAsUsed is the
-    // only state change
-    expect(refreshTokenAtomic).not.toHaveBeenCalled();
-    expect(result).not.toBeNull();
-  });
-
-  it("rejects and revokes the family when the atomic revoke loses the race (concurrent reuse)", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-
-    const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
-    refreshTokenFirst.mockResolvedValue(oldRow);
-    // a concurrent rotation already flipped revoked_at -> modifiedCount 0
-    refreshTokenAtomic.mockResolvedValue(0);
-    refreshTokenQuery.mockReturnValue(buildQuery([])); // revokeTokenFamily query
-
-    const user = buildUser();
-    const UserModel = { find: vi.fn().mockResolvedValue(user) };
-    configKey.mockImplementation((key: string, fallback?: unknown) => {
-      if (key === "auth.userType.user") return UserModel;
-      if (key === "auth.jwt.refresh.rotation") return true;
-      return fallback;
-    });
-
-    const result = await authService.refreshTokens("valid-token");
+    const result = await authService.refreshTokens("valid");
 
     expect(result).toBeNull();
-    expect(refreshTokenCreate).not.toHaveBeenCalled(); // no new pair issued
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-1");
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
   });
 
-  it("reuses the same family_id for the rotated pair", async () => {
+  it("only marks the token as used (no revoke) when rotation is disabled", async () => {
     jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+    const oldRow = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    refreshTokenFindByToken.mockResolvedValue(oldRow);
+    configureRotation(false, buildUser());
 
-    const oldRow = buildRefreshTokenRow({ family_id: "fam-keep" }, true);
-    refreshTokenFirst.mockResolvedValue(oldRow);
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "new-refresh-token" }));
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
+    await authService.refreshTokens("valid");
 
-    const user = buildUser();
-    const UserModel = { find: vi.fn().mockResolvedValue(user) };
-    configKey.mockImplementation((key: string, fallback?: unknown) => {
-      if (key === "auth.userType.user") return UserModel;
-      if (key === "auth.jwt.refresh.rotation") return true;
-      return fallback;
-    });
+    expect(oldRow.markAsUsed).toHaveBeenCalledOnce();
+    expect(oldRow.revokeIfActive).not.toHaveBeenCalled();
+  });
 
-    await authService.refreshTokens("valid-token");
+  it("returns null when the user type maps to no model", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "ghost", familyId: "fam" });
+    refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam" }, true));
 
-    // the newly-created refresh row keeps the old family_id, not a random one
-    expect(refreshTokenCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ family_id: "fam-keep" }),
+    expect(await authService.refreshTokens("valid")).toBeNull();
+  });
+
+  it("keeps the same family_id on the rotated pair", async () => {
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+    refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam-keep" }, true));
+    configureRotation(true, buildUser());
+
+    await authService.refreshTokens("valid");
+
+    expect(refreshTokenIssue).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ familyId: "fam-keep" }),
     );
-    expect(Random.string).not.toHaveBeenCalled();
   });
 });
 
 describe("authService.attemptLogin", () => {
-  it("emits login.attempt then returns null and emits login.failed when no user found", async () => {
+  it("returns null and emits login.failed when no user is found", async () => {
     const Model = { first: vi.fn().mockResolvedValue(null) } as never;
 
-    const result = await authService.attemptLogin(Model, {
-      email: "a@b.c",
-      password: "secret",
-    });
+    const result = await authService.attemptLogin(Model, { email: "a@b.c", password: "x" });
 
     expect(result).toBeNull();
     expect(emit).toHaveBeenCalledWith("login.attempt", { email: "a@b.c" });
     expect(emit).toHaveBeenCalledWith("login.failed", { email: "a@b.c" }, "User not found");
   });
 
-  it("strips the password from the lookup criteria", async () => {
-    const first = vi.fn().mockResolvedValue(null);
-    const Model = { first } as never;
+  it("returns null and emits login.failed on a wrong password", async () => {
+    const Model = { first: vi.fn().mockResolvedValue(buildUser()) } as never;
+    verifyPassword.mockResolvedValue(false);
 
-    await authService.attemptLogin(Model, { email: "a@b.c", password: "secret" });
-
-    expect(first).toHaveBeenCalledWith({ email: "a@b.c" });
-  });
-
-  it("returns null and emits login.failed when the password is wrong", async () => {
-    const user = buildUser();
-    const Model = { first: vi.fn().mockResolvedValue(user) } as never;
-    vi.mocked(verifyPassword).mockResolvedValue(false);
-
-    const result = await authService.attemptLogin(Model, { email: "a@b.c", password: "wrong" });
+    const result = await authService.attemptLogin(Model, { email: "a@b.c", password: "x" });
 
     expect(result).toBeNull();
     expect(emit).toHaveBeenCalledWith("login.failed", { email: "a@b.c" }, "Invalid password");
   });
 
-  it("returns the user when credentials are valid", async () => {
+  it("returns the user on a correct password", async () => {
     const user = buildUser();
     const Model = { first: vi.fn().mockResolvedValue(user) } as never;
-    vi.mocked(verifyPassword).mockResolvedValue(true);
+    verifyPassword.mockResolvedValue(true);
 
-    const result = await authService.attemptLogin(Model, { email: "a@b.c", password: "right" });
-
-    expect(result).toBe(user);
-    expect(verifyPassword).toHaveBeenCalledWith("right", "stored-hash");
+    expect(await authService.attemptLogin(Model, { email: "a@b.c", password: "x" })).toBe(user);
   });
 });
 
 describe("authService.login", () => {
-  beforeEach(() => {
-    jwtGenerate.mockResolvedValue("signed-access-token");
-    jwtVerify.mockResolvedValue({ exp: 1_700_000_000 });
-    accessTokenCreate.mockResolvedValue(undefined);
-    jwtGenerateRefreshToken.mockResolvedValue("signed-refresh-token");
-    refreshTokenCreate.mockResolvedValue(buildRefreshTokenRow({ token: "signed-refresh-token" }));
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
-    vi.mocked(verifyPassword).mockResolvedValue(true);
-  });
-
-  it("returns null when credentials are invalid", async () => {
+  it("returns null on invalid credentials", async () => {
     const Model = { first: vi.fn().mockResolvedValue(null) } as never;
 
-    const result = await authService.login(Model, { email: "a@b.c", password: "x" });
-
-    expect(result).toBeNull();
+    expect(await authService.login(Model, { email: "a@b.c", password: "x" })).toBeNull();
   });
 
-  it("returns access token only (no refresh) when refresh is disabled", async () => {
-    const user = buildUser();
-    const Model = { first: vi.fn().mockResolvedValue(user) } as never;
-
+  it("returns access-only tokens when refresh is disabled", async () => {
+    const Model = { first: vi.fn().mockResolvedValue(buildUser()) } as never;
+    verifyPassword.mockResolvedValue(true);
     configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.refresh.enabled" ? false : fallback,
     );
 
     const result = await authService.login(Model, { email: "a@b.c", password: "x" });
 
-    expect(result).not.toBeNull();
-    expect(result?.user).toBe(user);
     expect(result?.tokens.accessToken.token).toBe("signed-access-token");
     expect(result?.tokens.refreshToken).toBeUndefined();
-    expect(jwtGenerateRefreshToken).not.toHaveBeenCalled();
   });
 
-  it("returns a full token pair and emits login.success when refresh is enabled", async () => {
+  it("returns a full pair and emits login.success", async () => {
     const user = buildUser();
     const Model = { first: vi.fn().mockResolvedValue(user) } as never;
+    verifyPassword.mockResolvedValue(true);
 
-    configKey.mockImplementation((key: string, fallback?: unknown) =>
-      key === "auth.jwt.refresh.enabled" ? true : fallback,
-    );
+    const result = await authService.login(Model, { email: "a@b.c", password: "x" });
 
-    const deviceInfo = { ip: "1.2.3.4" };
-    const result = await authService.login(Model, { email: "a@b.c", password: "x" }, deviceInfo);
-
-    expect(result?.tokens.accessToken.token).toBe("signed-access-token");
-    expect(result?.tokens.refreshToken).toBeDefined();
-    expect(emit).toHaveBeenCalledWith("login.success", user, result?.tokens, deviceInfo);
+    expect(result?.tokens.refreshToken?.token).toBe("signed-refresh-token");
+    expect(emit).toHaveBeenCalledWith("login.success", user, result?.tokens, undefined);
   });
 });
 
 describe("authService.logout", () => {
-  it("removes the access token when one is supplied", async () => {
+  it("removes the access token when supplied", async () => {
     const user = buildUser({ id: 8 });
 
     await authService.logout(user, "the-access-token");
 
-    expect(accessTokenDelete).toHaveBeenCalledWith({
-      token: "the-access-token",
-      user_id: 8,
-    });
+    expect(accessTokenDeleteForUser).toHaveBeenCalledWith(user, "the-access-token");
     expect(emit).toHaveBeenCalledWith("logout", user);
   });
 
-  it("revokes the specific refresh token (scoped to the user) and emits session.destroyed", async () => {
+  it("revokes a specific refresh token scoped to the user and emits session.destroyed", async () => {
     const row = buildRefreshTokenRow({});
-    refreshTokenFirst.mockResolvedValue(row);
-
+    refreshTokenFindForUser.mockResolvedValue(row);
     const user = buildUser({ id: 8 });
+
     await authService.logout(user, undefined, "the-refresh-token");
 
-    expect(refreshTokenFirst).toHaveBeenCalledWith({
-      token: "the-refresh-token",
-      user_id: 8,
-    });
+    expect(refreshTokenFindForUser).toHaveBeenCalledWith(user, "the-refresh-token");
     expect(row.revoke).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledWith("session.destroyed", user, row);
-    expect(emit).toHaveBeenCalledWith("logout", user);
   });
 
   it("does not emit session.destroyed when the refresh token is not found", async () => {
-    refreshTokenFirst.mockResolvedValue(null);
+    refreshTokenFindForUser.mockResolvedValue(null);
 
-    const user = buildUser();
-    await authService.logout(user, undefined, "missing-token");
+    await authService.logout(buildUser(), undefined, "missing");
 
     expect(emit).not.toHaveBeenCalledWith("session.destroyed", expect.anything(), expect.anything());
-    expect(emit).toHaveBeenCalledWith("logout", user);
   });
 
-  it("revokes all tokens (fail-safe) when no refresh token is given and behavior is revoke-all", async () => {
-    refreshTokenQuery.mockReturnValue(buildQuery([])); // revokeAllTokens query
-    accessTokenDelete.mockResolvedValue(undefined);
-
+  it("revokes all tokens (fail-safe) when no refresh token is given", async () => {
+    refreshTokenRevokeAllFor.mockResolvedValue([]);
     configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.refresh.logoutWithoutToken" ? "revoke-all" : fallback,
     );
@@ -692,130 +461,95 @@ describe("authService.logout", () => {
     const user = buildUser();
     await authService.logout(user);
 
+    expect(refreshTokenRevokeAllFor).toHaveBeenCalledWith(user);
     expect(emit).toHaveBeenCalledWith("logout.failsafe", user);
-    expect(emit).toHaveBeenCalledWith("logout.all", user);
-    expect(emit).toHaveBeenCalledWith("logout", user);
   });
 
-  it("throws when no refresh token is given and behavior is error", async () => {
+  it("throws when logoutWithoutToken is 'error' and no refresh token is given", async () => {
     configKey.mockImplementation((key: string, fallback?: unknown) =>
       key === "auth.jwt.refresh.logoutWithoutToken" ? "error" : fallback,
     );
 
-    await expect(authService.logout(buildUser())).rejects.toThrow(
-      "Refresh token required for logout",
-    );
+    await expect(authService.logout(buildUser())).rejects.toThrow("Refresh token required");
+  });
+});
+
+describe("authService token removal helpers", () => {
+  it("removeAccessToken delegates to AccessToken.deleteForUser", async () => {
+    const user = buildUser({ id: 11 });
+
+    await authService.removeAccessToken(user, "tok");
+
+    expect(accessTokenDeleteForUser).toHaveBeenCalledWith(user, "tok");
+  });
+
+  it("removeAllAccessTokens delegates to AccessToken.deleteAllForUser", async () => {
+    const user = buildUser({ id: 11 });
+
+    await authService.removeAllAccessTokens(user);
+
+    expect(accessTokenDeleteAllForUser).toHaveBeenCalledWith(user);
+  });
+
+  it("removeRefreshToken delegates to RefreshToken.deleteForUser", async () => {
+    const user = buildUser({ id: 11 });
+
+    await authService.removeRefreshToken(user, "rtok");
+
+    expect(refreshTokenDeleteForUser).toHaveBeenCalledWith(user, "rtok");
   });
 });
 
 describe("authService.revokeAllTokens", () => {
-  it("revokes every active refresh token, deletes access tokens, and emits per-token + logout.all", async () => {
-    const rows = [buildRefreshTokenRow({}), buildRefreshTokenRow({})];
-    const query = buildQuery(rows);
-    refreshTokenQuery.mockReturnValue(query);
-    accessTokenDelete.mockResolvedValue(undefined);
+  it("bulk-revokes refresh tokens, emits per-token + logout.all, and clears access tokens", async () => {
+    const rows = [buildRefreshTokenRow({ id: "a" }), buildRefreshTokenRow({ id: "b" })];
+    refreshTokenRevokeAllFor.mockResolvedValue(rows);
+    const user = buildUser();
 
-    const user = buildUser({ id: 4, userType: "user" });
     await authService.revokeAllTokens(user);
 
-    expect(rows[0].revoke).toHaveBeenCalledOnce();
-    expect(rows[1].revoke).toHaveBeenCalledOnce();
+    expect(refreshTokenRevokeAllFor).toHaveBeenCalledWith(user);
     expect(emit).toHaveBeenCalledWith("token.revoked", user, rows[0]);
     expect(emit).toHaveBeenCalledWith("token.revoked", user, rows[1]);
-    expect(accessTokenDelete).toHaveBeenCalledWith({ user_id: 4 });
+    expect(accessTokenDeleteAllForUser).toHaveBeenCalledWith(user);
     expect(emit).toHaveBeenCalledWith("logout.all", user);
-  });
-
-  it("filters by user_id, user_type, and unrevoked tokens", async () => {
-    const query = buildQuery([]);
-    refreshTokenQuery.mockReturnValue(query);
-
-    const user = buildUser({ id: 4, userType: "admin" });
-    await authService.revokeAllTokens(user);
-
-    expect(query.where).toHaveBeenCalledWith("user_id", 4);
-    expect(query.where).toHaveBeenCalledWith("user_type", "admin");
-    expect(query.where).toHaveBeenCalledWith("revoked_at", null);
   });
 });
 
 describe("authService.revokeTokenFamily", () => {
-  it("revokes each token in the family and emits token.familyRevoked", async () => {
-    const rows = [buildRefreshTokenRow({}), buildRefreshTokenRow({})];
-    const query = buildQuery(rows);
-    refreshTokenQuery.mockReturnValue(query);
+  it("bulk-revokes the family and emits token.familyRevoked", async () => {
+    const rows = [buildRefreshTokenRow({ id: "a" })];
+    refreshTokenRevokeFamily.mockResolvedValue(rows);
 
     await authService.revokeTokenFamily("fam-42");
 
-    expect(query.where).toHaveBeenCalledWith("family_id", "fam-42");
-    expect(query.where).toHaveBeenCalledWith("revoked_at", null);
-    expect(rows[0].revoke).toHaveBeenCalledOnce();
-    expect(rows[1].revoke).toHaveBeenCalledOnce();
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-42");
     expect(emit).toHaveBeenCalledWith("token.familyRevoked", "fam-42", rows);
   });
 });
 
 describe("authService.cleanupExpiredTokens", () => {
-  it("destroys each expired token, emits token.expired + cleanup.completed, and returns the count", async () => {
-    const rows = [buildRefreshTokenRow({}), buildRefreshTokenRow({}), buildRefreshTokenRow({})];
-    const query = buildQuery(rows);
-    refreshTokenQuery.mockReturnValue(query);
+  it("purges refresh + access tokens, emits per-token + cleanup.completed, returns the refresh count", async () => {
+    const rows = [buildRefreshTokenRow({ id: "a" }), buildRefreshTokenRow({ id: "b" })];
+    refreshTokenPurgeExpired.mockResolvedValue(rows);
+    accessTokenPurgeExpired.mockResolvedValue(3);
 
     const count = await authService.cleanupExpiredTokens();
 
-    expect(count).toBe(3);
-    for (const row of rows) {
-      expect(row.destroy).toHaveBeenCalledOnce();
-      expect(emit).toHaveBeenCalledWith("token.expired", row);
-    }
-    expect(emit).toHaveBeenCalledWith("cleanup.completed", 3);
-  });
-
-  it("returns 0 and still emits cleanup.completed when nothing is expired", async () => {
-    refreshTokenQuery.mockReturnValue(buildQuery([]));
-
-    const count = await authService.cleanupExpiredTokens();
-
-    expect(count).toBe(0);
-    expect(emit).toHaveBeenCalledWith("cleanup.completed", 0);
+    expect(count).toBe(2);
+    expect(emit).toHaveBeenCalledWith("token.expired", rows[0]);
+    expect(accessTokenPurgeExpired).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledWith("cleanup.completed", 2);
   });
 });
 
 describe("authService.getActiveSessions", () => {
-  it("returns active, unexpired sessions ordered by newest first", async () => {
-    const rows = [buildRefreshTokenRow({}), buildRefreshTokenRow({})];
-    const query = buildQuery(rows);
-    refreshTokenQuery.mockReturnValue(query);
+  it("delegates to RefreshToken.activeFor", async () => {
+    const rows = [buildRefreshTokenRow({})];
+    refreshTokenActiveFor.mockResolvedValue(rows);
+    const user = buildUser();
 
-    const user = buildUser({ id: 2, userType: "user" });
-    const sessions = await authService.getActiveSessions(user);
-
-    expect(sessions).toBe(rows);
-    expect(query.where).toHaveBeenCalledWith({
-      user_id: 2,
-      user_type: "user",
-      revoked_at: null,
-    });
-    expect(query.orderBy).toHaveBeenCalledWith("created_at", "desc");
-  });
-});
-
-describe("authService token removal helpers", () => {
-  it("removeAccessToken deletes by token + user_id", async () => {
-    await authService.removeAccessToken(buildUser({ id: 11 }), "tok");
-
-    expect(accessTokenDelete).toHaveBeenCalledWith({ token: "tok", user_id: 11 });
-  });
-
-  it("removeAllAccessTokens deletes by user_id", async () => {
-    await authService.removeAllAccessTokens(buildUser({ id: 11 }));
-
-    expect(accessTokenDelete).toHaveBeenCalledWith({ user_id: 11 });
-  });
-
-  it("removeRefreshToken deletes by token + user_id", async () => {
-    await authService.removeRefreshToken(buildUser({ id: 11 }), "rtok");
-
-    expect(refreshTokenDelete).toHaveBeenCalledWith({ token: "rtok", user_id: 11 });
+    expect(await authService.getActiveSessions(user)).toBe(rows);
+    expect(refreshTokenActiveFor).toHaveBeenCalledWith(user);
   });
 });

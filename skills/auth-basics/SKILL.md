@@ -56,15 +56,16 @@ export default {
     user: User,
     // admin: Admin,  // for multi-user-type
   },
-  jwt: {
+  accessToken: {
     secret: env("JWT_SECRET"),
     expiresIn: "1h",
-    refresh: {
-      enabled: true,
-      expiresIn: "30d",
-      rotation: true,
-      maxPerUser: 5,
-    },
+  },
+  refreshToken: {
+    secret: env("JWT_REFRESH_SECRET"), // recommended: a separate refresh secret
+    enabled: true,
+    expiresIn: "30d",
+    rotation: true,
+    maxPerUser: 5,
   },
 };
 ```

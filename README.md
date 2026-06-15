@@ -10,6 +10,31 @@ yarn add @warlock.js/auth
 
 `@warlock.js/auth` is coupled to `@warlock.js/core` — install it inside a Warlock project.
 
+## Configure
+
+```ts title="src/config/auth.ts"
+import { type AuthConfigurations } from "@warlock.js/auth";
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user";
+
+const authConfigurations: AuthConfigurations = {
+  userType: { user: User },
+  accessToken: {
+    secret: env("JWT_SECRET"),
+    expiresIn: "1h",
+  },
+  refreshToken: {
+    secret: env("JWT_REFRESH_SECRET"),
+    expiresIn: "30d",
+    rotation: true,
+  },
+};
+
+export default authConfigurations;
+```
+
+The legacy `jwt: { secret, expiresIn, refresh: {…} }` block is still honored (with a deprecation warning), but prefer the `accessToken` / `refreshToken` blocks.
+
 ## Documentation
 
 Task-focused guides live under [`skills/`](./skills):
@@ -21,6 +46,7 @@ Task-focused guides live under [`skills/`](./skills):
 - **protect-routes** — gate routes with `authMiddleware`
 - **manage-tokens** — the full token lifecycle (rotation, revocation, cleanup)
 - **customize-user-type** — multiple user types in one system
+- **customize-token-storage** — override the token models (multi-tenant columns, custom storage)
 - **throttle-login-attempts** — brute-force protection via `loginThrottleMiddleware`
 - **run-auth-commands** — the bundled CLI commands
 

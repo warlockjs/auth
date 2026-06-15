@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const configKey = vi.fn();
 const jwtVerify = vi.fn();
-const accessTokenFirst = vi.fn();
+const accessTokenFindByToken = vi.fn();
 
 vi.mock("@warlock.js/core", () => ({
   config: { key: (...args: unknown[]) => configKey(...args) },
@@ -18,15 +18,11 @@ vi.mock("../services/jwt", () => ({
 }));
 
 vi.mock("../models/access-token", () => ({
-  AccessToken: { first: (...args: unknown[]) => accessTokenFirst(...args) },
+  AccessToken: { findByToken: (...args: unknown[]) => accessTokenFindByToken(...args) },
 }));
 
 import { authMiddleware } from "./auth.middleware";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
-
-type FakeResponse = {
-  unauthorized: ReturnType<typeof vi.fn>;
-};
 
 function buildRequest(authorizationValue?: string) {
   return {
@@ -37,27 +33,27 @@ function buildRequest(authorizationValue?: string) {
   };
 }
 
-function buildResponse(): FakeResponse {
+function buildResponse() {
   return { unauthorized: vi.fn() };
 }
 
-function stubAuthenticatedUser(userType: string) {
-  jwtVerify.mockResolvedValue({ id: 1, userType });
+/**
+ * Route `config.key`: model resolution falls back to the (mocked) AccessToken,
+ * and `auth.userType.<type>` resolves to the supplied user model.
+ */
+function stubConfig(userModel: unknown) {
+  configKey.mockImplementation((key: string, fallback?: unknown) => {
+    if (key.startsWith("auth.userType.")) return userModel;
 
-  accessTokenFirst.mockResolvedValue({
-    get: (key: string) => (key === "user_type" ? userType : undefined),
+    return fallback; // model resolution → mocked AccessToken
   });
-
-  configKey.mockReturnValue({ find: vi.fn().mockResolvedValue({ id: 1, userType }) });
 }
 
-describe("authMiddleware", () => {
-  beforeEach(() => {
-    configKey.mockReset();
-    jwtVerify.mockReset();
-    accessTokenFirst.mockReset();
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
+describe("authMiddleware", () => {
   it("rejects an unauthenticated request even with an empty allow-list", async () => {
     const middleware = authMiddleware([]);
     const request = buildRequest(undefined);
@@ -72,7 +68,9 @@ describe("authMiddleware", () => {
   });
 
   it("allows any authenticated user when called with an empty array", async () => {
-    stubAuthenticatedUser("user");
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user" });
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
@@ -85,7 +83,9 @@ describe("authMiddleware", () => {
   });
 
   it("rejects an authenticated user whose type is not in the allow-list", async () => {
-    stubAuthenticatedUser("user");
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user" });
+    stubConfig({ find: vi.fn() });
 
     const middleware = authMiddleware(["admin"]);
     const request = buildRequest("valid-token");
@@ -100,7 +100,9 @@ describe("authMiddleware", () => {
   });
 
   it("allows an authenticated user whose type matches the allow-list", async () => {
-    stubAuthenticatedUser("user");
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user" });
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
 
     const middleware = authMiddleware(["user"]);
     const request = buildRequest("valid-token");
@@ -114,7 +116,7 @@ describe("authMiddleware", () => {
 
   it("rejects when the token verifies but no access-token row exists", async () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
-    accessTokenFirst.mockResolvedValue(null);
+    accessTokenFindByToken.mockResolvedValue(null);
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
@@ -130,15 +132,9 @@ describe("authMiddleware", () => {
 
   it("destroys the access-token row and rejects when the user no longer exists", async () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
-
     const destroy = vi.fn();
-
-    accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "user_type" ? "user" : undefined),
-      destroy,
-    });
-
-    configKey.mockReturnValue({ find: vi.fn().mockResolvedValue(null) });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user", destroy });
+    stubConfig({ find: vi.fn().mockResolvedValue(null) });
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
@@ -169,12 +165,10 @@ describe("authMiddleware", () => {
 
   it("rejects when the resolved user type maps to no registered model", async () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "ghost" });
-
-    accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "user_type" ? "ghost" : undefined),
-    });
-
-    configKey.mockReturnValue(undefined);
+    accessTokenFindByToken.mockResolvedValue({ userType: "ghost" });
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key.startsWith("auth.userType.") ? undefined : fallback,
+    );
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
@@ -188,15 +182,10 @@ describe("authMiddleware", () => {
   });
 
   it("falls back to the access-token row's userType when the decoded token has none", async () => {
-    // decoded payload carries no userType; the stored row supplies "admin"
-    jwtVerify.mockResolvedValue({ id: 1 });
-
-    accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "user_type" ? "admin" : undefined),
-    });
-
+    jwtVerify.mockResolvedValue({ id: 1 }); // no userType in the payload
+    accessTokenFindByToken.mockResolvedValue({ userType: "admin" });
     const find = vi.fn().mockResolvedValue({ id: 1, userType: "admin" });
-    configKey.mockReturnValue({ find });
+    stubConfig({ find });
 
     const middleware = authMiddleware(["admin"]);
     const request = buildRequest("valid-token");
@@ -204,7 +193,6 @@ describe("authMiddleware", () => {
 
     await middleware(request as never, response as never);
 
-    // the model was looked up under the row-supplied "admin" type
     expect(configKey).toHaveBeenCalledWith("auth.userType.admin");
     expect(response.unauthorized).not.toHaveBeenCalled();
     expect(request.user).toEqual({ id: 1, userType: "admin" });
@@ -213,10 +201,8 @@ describe("authMiddleware", () => {
   it("stores the decoded access token on the request before resolving the user", async () => {
     const decoded = { id: 9, userType: "user" };
     jwtVerify.mockResolvedValue(decoded);
-    accessTokenFirst.mockResolvedValue({
-      get: (key: string) => (key === "user_type" ? "user" : undefined),
-    });
-    configKey.mockReturnValue({ find: vi.fn().mockResolvedValue({ id: 9, userType: "user" }) });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user" });
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 9, userType: "user" }) });
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
@@ -228,7 +214,9 @@ describe("authMiddleware", () => {
   });
 
   it("looks up the access-token row by the raw authorization value", async () => {
-    stubAuthenticatedUser("user");
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue({ userType: "user" });
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
 
     const middleware = authMiddleware([]);
     const request = buildRequest("the-raw-token");
@@ -236,6 +224,6 @@ describe("authMiddleware", () => {
 
     await middleware(request as never, response as never);
 
-    expect(accessTokenFirst).toHaveBeenCalledWith({ token: "the-raw-token" });
+    expect(accessTokenFindByToken).toHaveBeenCalledWith("the-raw-token");
   });
 });

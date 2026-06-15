@@ -23,7 +23,7 @@ Your user model extends the `Auth` base model and declares its `userType`. A log
 
 ## Skills index
 
-Eight task skills. Most apps need `auth-basics` + `protect-routes` + `handle-login-and-logout`.
+Nine task skills. Most apps need `auth-basics` + `protect-routes` + `handle-login-and-logout`.
 
 ### Foundations
 
@@ -48,6 +48,9 @@ The token lifecycle — `generateAccessToken`, `createRefreshToken`, `createToke
 
 #### [`customize-user-type`](@warlock.js/auth/customize-user-type/SKILL.md)
 Support multiple user types in one system — each `Auth` subclass overrides `userType`, `config.auth.userType.<slug>` maps the slug to a model class, `authMiddleware("admin")` / `authMiddleware(["admin", "staff"])` gates per type.
+
+#### [`customize-token-storage`](@warlock.js/auth/customize-token-storage/SKILL.md)
+Override the persisted `AccessToken` / `RefreshToken` models to add columns (multi-tenant `organization_id`), rename, or change storage — extend the model + schema and register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`.
 
 #### [`throttle-login-attempts`](@warlock.js/auth/throttle-login-attempts/SKILL.md)
 Brute-force / credential-stuffing protection — `loginThrottleMiddleware()` counts only failed logins, resets on success, locks per-account + per-IP after a threshold, and rejects pre-controller with 429. Cache-backed, fails open on a cache outage.

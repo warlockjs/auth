@@ -7,6 +7,10 @@ vi.mock("@warlock.js/core", () => ({
   config: { key: (...args: unknown[]) => configKey(...args) },
 }));
 
+vi.mock("@warlock.js/logger", () => ({
+  log: { warn: vi.fn() },
+}));
+
 import { jwt } from "./jwt";
 
 const ACCESS_SECRET = "access-secret-key-for-tests-0123456789";

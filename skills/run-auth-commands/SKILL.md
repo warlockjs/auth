@@ -44,7 +44,7 @@ Run it once when setting up a new project. Each developer typically runs it loca
 yarn warlock auth.cleanup
 ```
 
-Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed. Fires `token.expired` per token and `cleanup.completed` once.
+Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed, then sweeps expired access-token rows too. Fires `token.expired` per refresh token and `cleanup.completed` once.
 
 Schedule it periodically. Two common shapes:
 

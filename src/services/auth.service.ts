@@ -6,12 +6,30 @@ import type { AccessTokenOutput, DeviceInfo, LoginResult, TokenPair } from "../c
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
+import { authConfig } from "./auth-config";
 import { authEvents } from "./auth-events";
 import { jwt } from "./jwt";
 
 class AuthService {
   /**
-   * Build access token payload from user
+   * Resolve the active access-token model — the package default, or a subclass
+   * an app registered under `config.auth.accessToken.model` (e.g. to add a
+   * tenant column). The service never references the concrete class directly so
+   * an override is a pure config change.
+   */
+  private get accessTokenModel(): typeof AccessToken {
+    return config.key("auth.accessToken.model", AccessToken);
+  }
+
+  /**
+   * Resolve the active refresh-token model (default or registered override).
+   */
+  private get refreshTokenModel(): typeof RefreshToken {
+    return config.key("auth.refreshToken.model", RefreshToken);
+  }
+
+  /**
+   * Build the default access-token JWT payload from a user.
    */
   public buildAccessTokenPayload(user: Auth) {
     return {
@@ -22,36 +40,34 @@ class AuthService {
   }
 
   /**
-   * Generate access token for user
+   * Sign + persist an access token for the user and return the token with its
+   * expiry. The expiry is computed locally from `expiresIn` rather than by
+   * re-verifying the token we just signed.
    */
   public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
-    const expiresInConfig = config.key("auth.jwt.expiresIn");
-    const expiresIn = expiresInConfig ? ms(expiresInConfig) : ms("1h"); // default 1 hour
+    const expiresInConfig = authConfig.accessToken.expiresIn();
+    const expiresIn = expiresInConfig
+      ? ms(expiresInConfig as ms.StringValue)
+      : ms("1h"); // default 1 hour
 
-    // If expiresIn is undefined, token never expires
     const token = await jwt.generate(data, { expiresIn });
+    const expiresAt = new Date(Date.now() + expiresIn);
 
-    const decoed = await jwt.verify(token);
+    await this.accessTokenModel.issue(user, token, expiresAt);
 
-    // Store in database
-    await AccessToken.create({
-      token,
-      user_id: user.id,
-      user_type: user.userType,
-    });
-
-    return { token, expiresAt: new Date(decoed.exp * 1_000).toISOString() };
+    return { token, expiresAt: expiresAt.toISOString() };
   }
 
   /**
-   * Create refresh token for user
+   * Sign + persist a refresh token for the user (enforcing the per-user cap
+   * first). Resolves to `undefined` when refresh tokens are disabled in config.
    */
   public async createRefreshToken(
     user: Auth,
     deviceInfo?: DeviceInfo,
   ): Promise<RefreshToken | undefined> {
-    if (config.get("auth.jwt.refresh.enabled") === false) return;
+    if (!authConfig.refreshToken.enabled()) return;
 
     const familyId = deviceInfo?.familyId || Random.string(32);
 
@@ -61,37 +77,18 @@ class AuthService {
       familyId,
     };
 
-    const epireTime = config.get("auth.jwt.refresh.expiresIn", "7d");
+    const expiresIn = ms(authConfig.refreshToken.expiresIn() as ms.StringValue);
+    const expiresAt = new Date(Date.now() + expiresIn).toISOString();
 
-    const expiresIn = ms(epireTime);
+    await this.refreshTokenModel.enforceMax(user, authConfig.refreshToken.maxPerUser());
 
     const token = await jwt.generateRefreshToken(payload, { expiresIn });
 
-    // Calculate expiration date (undefined means never expires, but we still set a far future date)
-    const expiresAt = new Date(Date.now() + expiresIn).toISOString();
-
-    // Enforce max tokens per user
-    await this.enforceMaxRefreshTokens(user);
-
-    // Store in database
-    return RefreshToken.create({
-      token,
-      user_id: user.id,
-      user_type: user.userType,
-      family_id: familyId,
-      expires_at: expiresAt,
-      device_info: deviceInfo
-        ? {
-            userAgent: deviceInfo.userAgent,
-            ip: deviceInfo.ip,
-            deviceId: deviceInfo.deviceId,
-          }
-        : undefined,
-    });
+    return this.refreshTokenModel.issue(user, token, { familyId, expiresAt, deviceInfo });
   }
 
   /**
-   * Create both access and refresh tokens
+   * Issue both an access and a refresh token, emitting the creation events.
    */
   public async createTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
     const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
@@ -107,7 +104,6 @@ class AuthService {
         : undefined,
     };
 
-    // Emit events
     authEvents.emit("token.created", user, tokenPair);
 
     if (refreshToken) {
@@ -118,14 +114,15 @@ class AuthService {
   }
 
   /**
-   * Refresh tokens using a refresh token
+   * Exchange a refresh token for a new token pair, with rotation + replay
+   * detection. A concurrent reuse of the same token loses the atomic revoke and
+   * is treated as a breach — the whole family is revoked and the request fails.
    */
   public async refreshTokens(
     refreshTokenString: string,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair | null> {
     try {
-      // 1. Verify JWT signature
       const decoded = await jwt.verifyRefreshToken<{
         userId: number;
         userType: string;
@@ -134,39 +131,33 @@ class AuthService {
 
       if (!decoded) return null;
 
-      // 2. Find token in database
-      const refreshToken = await RefreshToken.first({ token: refreshTokenString });
+      const refreshToken = await this.refreshTokenModel.findByToken(refreshTokenString);
 
       if (!refreshToken?.isValid) {
-        // If token was already used (rotation detection), revoke entire family
+        // Already-invalid token presented → likely a replayed (rotated) token.
         if (refreshToken) {
-          await this.revokeTokenFamily(refreshToken.get("family_id"));
+          await this.revokeTokenFamily(refreshToken.familyId);
         }
+
         return null;
       }
 
-      // 3. Get user model and find user
       const UserModel = config.key(`auth.userType.${decoded.userType}`);
+
       if (!UserModel) return null;
 
       const user = (await UserModel.find(decoded.userId)) as Auth | null;
+
       if (!user) return null;
 
-      // 4. Rotate token if enabled (revoke old token)
-      const rotationEnabled = config.key("auth.jwt.refresh.rotation", true);
-      if (rotationEnabled) {
-        // Conditional revoke — flips `revoked_at` only when it is still NULL.
-        // `revokedCount === 0` means a concurrent rotation already won the
-        // race (reuse / replay), so revoke the whole family and reject.
-        // Closes the race where both requests pass the in-memory `isValid`
-        // check above before either revoke lands.
-        const revokedCount = await RefreshToken.atomic(
-          { id: refreshToken.id, revoked_at: null },
-          { $set: { revoked_at: new Date() } },
-        );
+      const rotationEnabled = authConfig.refreshToken.rotation();
 
-        if (revokedCount === 0) {
-          await this.revokeTokenFamily(refreshToken.get("family_id"));
+      if (rotationEnabled) {
+        const won = await refreshToken.revokeIfActive();
+
+        if (!won) {
+          // A concurrent request already rotated this token (reuse / replay).
+          await this.revokeTokenFamily(refreshToken.familyId);
 
           return null;
         }
@@ -174,13 +165,11 @@ class AuthService {
         await refreshToken.markAsUsed();
       }
 
-      // 5. Generate new token pair (keep same family)
       const newTokenPair = await this.createTokenPair(user, {
         ...deviceInfo,
-        familyId: refreshToken.get("family_id"),
+        familyId: refreshToken.familyId,
       });
 
-      // Emit token refreshed event
       authEvents.emit("token.refreshed", user, newTokenPair, refreshToken);
 
       return newTokenPair;
@@ -190,37 +179,39 @@ class AuthService {
   }
 
   /**
-   * Verify password
+   * Verify a plaintext password against a stored hash.
    */
   public async verifyPassword(plainPassword: string, hashedPassword: string): Promise<boolean> {
     return verifyPassword(plainPassword, hashedPassword);
   }
 
   /**
-   * Hash password
+   * Hash a plaintext password.
    */
   public async hashPassword(password: string): Promise<string> {
     return hashPassword(password);
   }
 
   /**
-   * Attempt to login user with given credentials
+   * Resolve a user by credentials, verifying the password. Returns `null` on a
+   * missing user or a wrong password, emitting `login.failed` either way.
    */
   public async attemptLogin<T extends Auth>(Model: ChildModel<T>, data: any): Promise<T | null> {
     const { password, ...otherData } = data;
 
-    // Emit login attempt event
     authEvents.emit("login.attempt", otherData);
 
     const user = (await Model.first(otherData)) as T | null;
 
     if (!user) {
       authEvents.emit("login.failed", otherData, "User not found");
+
       return null;
     }
 
     if (!(await this.verifyPassword(password, user.string("password")!))) {
       authEvents.emit("login.failed", otherData, "Invalid password");
+
       return null;
     }
 
@@ -228,8 +219,8 @@ class AuthService {
   }
 
   /**
-   * Full login flow: validate credentials, create tokens, emit events
-   * Returns token pair on success, null on failure
+   * Full login flow: validate credentials, issue tokens, emit events. Returns
+   * the user + token pair on success, `null` on failure.
    */
   public async login<T extends Auth>(
     Model: ChildModel<T>,
@@ -242,189 +233,126 @@ class AuthService {
       return null;
     }
 
-    // if no refresh token in config, then return user and access token only
-    if (!config.key("auth.jwt.refresh.enabled", true)) {
+    if (!authConfig.refreshToken.enabled()) {
       const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
+
       return { user, tokens: { accessToken } };
     }
 
     const tokens = await this.createTokenPair(user, deviceInfo);
 
-    // Emit login success event
     authEvents.emit("login.success", user, tokens, deviceInfo);
 
     return { user, tokens } as LoginResult<T>;
   }
 
   /**
-   * Logout user
-   * @param user - The authenticated user
-   * @param accessToken - Optional access token string to revoke
-   * @param refreshToken - Optional refresh token string to revoke
-   * If refresh token is not provided, behavior is determined by config:
-   * - "revoke-all" (default): Revoke ALL refresh tokens for security
-   * - "error": Throw error requiring refresh token
+   * Log a user out.
+   *
+   * @param accessToken - access token string to revoke (optional)
+   * @param refreshToken - refresh token string to revoke (optional)
+   *
+   * When no refresh token is supplied, `config.auth.refreshToken.logoutWithoutToken`
+   * decides the behavior: `"revoke-all"` (default, fail-safe) revokes every
+   * refresh token; `"error"` requires the caller to pass one.
    */
   public async logout(user: Auth, accessToken?: string, refreshToken?: string): Promise<void> {
-    // Remove access token if provided
     if (accessToken) {
       await this.removeAccessToken(user, accessToken);
     }
 
     if (refreshToken) {
-      // Revoke specific refresh token
-      const token = await RefreshToken.first({
-        token: refreshToken,
-        user_id: user.id, // Security: ensure token belongs to this user
-      });
+      const token = await this.refreshTokenModel.findForUser(user, refreshToken);
 
       if (token) {
         await token.revoke();
         authEvents.emit("session.destroyed", user, token);
       }
     } else {
-      // No refresh token provided - check configured behavior
-      const behavior = config.key("auth.jwt.refresh.logoutWithoutToken", "revoke-all") as
-        | "revoke-all"
-        | "error";
+      const behavior = authConfig.refreshToken.logoutWithoutToken();
 
       if (behavior === "error") {
         throw new Error("Refresh token required for logout");
       }
 
-      // Default: revoke-all (fail-safe)
       await this.revokeAllTokens(user);
       authEvents.emit("logout.failsafe", user);
     }
 
-    // Emit logout event
     authEvents.emit("logout", user);
   }
 
   /**
-   * Remove specific access token
+   * Remove a specific access token belonging to the user.
    */
   public async removeAccessToken(user: Auth, token: string): Promise<void> {
-    await AccessToken.delete({
-      token,
-      user_id: user.id,
-    });
+    await this.accessTokenModel.deleteForUser(user, token);
   }
 
   /**
-   * Remove all access tokens for a user
+   * Remove every access token belonging to the user.
    */
   public async removeAllAccessTokens(user: Auth): Promise<void> {
-    // Delete access token
-    await AccessToken.delete({
-      user_id: user.id,
-    });
+    await this.accessTokenModel.deleteAllForUser(user);
   }
 
   /**
-   * Remove specific refresh token
+   * Remove a specific refresh token belonging to the user.
    */
   public async removeRefreshToken(user: Auth, token: string): Promise<void> {
-    await RefreshToken.delete({
-      token,
-      user_id: user.id,
-    });
+    await this.refreshTokenModel.deleteForUser(user, token);
   }
 
   /**
-   * Revoke all tokens for a user
+   * Revoke every active refresh token for the user and delete their access
+   * tokens — "log out of all devices". Revocation is a single bulk update; an
+   * event fires per revoked token.
    */
   public async revokeAllTokens(user: Auth): Promise<void> {
-    // Revoke all refresh tokens
-    const refreshTokens = await RefreshToken.query()
-      .where("user_id", user.id)
-      .where("user_type", user.userType)
-      .where("revoked_at", null)
-      .get();
+    const revokedTokens = await this.refreshTokenModel.revokeAllFor(user);
 
-    for (const token of refreshTokens) {
-      await token.revoke();
+    for (const token of revokedTokens) {
       authEvents.emit("token.revoked", user, token);
     }
 
-    // Delete all access tokens
     await this.removeAllAccessTokens(user);
 
-    // Emit logout all event
     authEvents.emit("logout.all", user);
   }
 
   /**
-   * Revoke entire token family (for rotation breach detection)
+   * Revoke an entire token family — rotation breach containment.
    */
   public async revokeTokenFamily(familyId: string): Promise<void> {
-    const tokens = await RefreshToken.query()
-      .where("family_id", familyId)
-      .where("revoked_at", null)
-      .get();
+    const revokedTokens = await this.refreshTokenModel.revokeFamily(familyId);
 
-    for (const token of tokens) {
-      await token.revoke();
-    }
-
-    // Emit family revoked event
-    authEvents.emit("token.familyRevoked", familyId, tokens);
+    authEvents.emit("token.familyRevoked", familyId, revokedTokens);
   }
 
   /**
-   * Cleanup expired tokens
+   * Delete expired tokens (refresh + access). Emits `token.expired` per refresh
+   * token and `cleanup.completed` with the refresh count. Drives the
+   * `auth.cleanup` CLI command.
    */
   public async cleanupExpiredTokens(): Promise<number> {
-    const expiredTokens = await RefreshToken.query().where("expires_at", "<", new Date()).get();
+    const expiredTokens = await this.refreshTokenModel.purgeExpired();
 
     for (const token of expiredTokens) {
       authEvents.emit("token.expired", token);
-      await token.destroy();
     }
 
-    // Emit cleanup completed event
+    await this.accessTokenModel.purgeExpired();
+
     authEvents.emit("cleanup.completed", expiredTokens.length);
 
     return expiredTokens.length;
   }
 
   /**
-   * Enforce max refresh tokens per user
-   */
-  private async enforceMaxRefreshTokens(user: Auth): Promise<void> {
-    const maxPerUser = config.key("auth.jwt.refresh.maxPerUser", 5);
-
-    const activeTokens = await RefreshToken.query()
-      .where({
-        user_id: user.id,
-        user_type: user.userType,
-        revoked_at: null,
-      })
-      .orderBy("created_at", "asc")
-      .get();
-
-    // Revoke oldest tokens if exceeding limit
-    if (activeTokens.length >= maxPerUser) {
-      const tokensToRevoke = activeTokens.slice(0, activeTokens.length - maxPerUser + 1);
-      for (const token of tokensToRevoke) {
-        await token.revoke();
-      }
-    }
-  }
-
-  /**
-   * Get active sessions for user
+   * Active, unexpired sessions for the user, newest first.
    */
   public async getActiveSessions(user: Auth): Promise<RefreshToken[]> {
-    return RefreshToken.query()
-      .where({
-        user_id: user.id,
-        user_type: user.userType,
-        revoked_at: null,
-      })
-      .where("expires_at", ">", new Date())
-      .orderBy("created_at", "desc")
-      .get();
+    return this.refreshTokenModel.activeFor(user);
   }
 }
 

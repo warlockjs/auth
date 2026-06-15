@@ -12,14 +12,13 @@ export const AccessTokenMigration = migrate(AccessToken, {
 
     // Token field
     this.text("token").unique();
-    this.timestamp("last_access").nullable();
 
     // User reference (flat columns for cross-driver compatibility)
     this.uuid("user_id").index();
     this.string("user_type", 50).nullable();
 
-    // Status (for token revocation)
-    this.boolean("is_active").nullable();
+    // Expiry — enables server-side cleanup of stale access-token rows
+    this.timestamp("expires_at").index().nullable();
 
     // Timestamps
     this.timestamps();

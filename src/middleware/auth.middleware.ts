@@ -5,6 +5,15 @@ import { jwt } from "../services/jwt";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 
 /**
+ * Decoded access-token claims the middleware reads. The full payload carries
+ * more (`created_at`, `tokenType`, `iat`, `exp`) but only these drive routing.
+ */
+type DecodedAccessToken = {
+  id: string | number;
+  userType?: string;
+};
+
+/**
  * Build a route gate that always requires an authenticated request.
  *
  * The argument is mandatory and selects which user types may pass:
@@ -35,15 +44,14 @@ export function authMiddleware(allowedUserType: string | string[]) {
         });
       }
 
-      // get current user jwt
-      const user = await jwt.verify(authorizationValue);
+      const decoded = await jwt.verify<DecodedAccessToken>(authorizationValue);
 
-      // store decoded access token object in request object
-      request.decodedAccessToken = user;
-      // use our own jwt verify to verify the token
-      const accessToken = await AccessToken.first({
-        token: authorizationValue,
-      });
+      request.decodedAccessToken = decoded;
+
+      // A valid signature is not enough — the token must still exist in storage,
+      // so deleting the row (logout) invalidates it before its JWT expiry.
+      const AccessTokenModel = config.key("auth.accessToken.model", AccessToken);
+      const accessToken = await AccessTokenModel.findByToken(authorizationValue);
 
       if (!accessToken) {
         return response.unauthorized({
@@ -52,10 +60,8 @@ export function authMiddleware(allowedUserType: string | string[]) {
         });
       }
 
-      // now, we need to get an instance of user using its corresponding model
-      const userType = user.userType || accessToken.get("user_type");
+      const userType = decoded.userType ?? accessToken.userType;
 
-      // check if the user type is allowed
       if (allowedTypes.length && !allowedTypes.includes(userType)) {
         return response.unauthorized({
           error: t("auth.errors.unauthorized"),
@@ -63,32 +69,26 @@ export function authMiddleware(allowedUserType: string | string[]) {
         });
       }
 
-      // get user model class
       const UserModel = config.key(`auth.userType.${userType}`);
 
       if (!UserModel) {
         throw new Error(`User type ${userType} is unknown type.`);
       }
 
-      // get user model instance
-      const currentUser = await UserModel.find(user.id);
+      const currentUser = await UserModel.find(decoded.id);
 
       if (!currentUser) {
         await accessToken.destroy();
+
         return response.unauthorized({
           error: t("auth.errors.invalidAccessToken"),
           errorCode: AuthErrorCodes.InvalidAccessToken,
         });
       }
 
-      // update last access
-      // accessToken.set("lastAccess", new Date());
-      // await accessToken.save({ skipEvents: true });
-
-      // set current user
       request.user = currentUser;
-    } catch (err: any) {
-      log.error("http", "auth", err);
+    } catch (error: any) {
+      log.error("http", "auth", error);
 
       request.clearCurrentUser();
 

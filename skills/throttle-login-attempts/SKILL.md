@@ -21,6 +21,8 @@ router.post("/auth/login", loginController, {
 
 That's the whole feature for most apps. Defaults: **5** failed attempts within a **15m** window trips a **15m** lockout, tracked independently per account (the `email` field) **and** per source IP.
 
+> **Heads-up — account-lockout is a DoS surface.** Because the default tracks per-`email`, an attacker who knows a victim's address can lock them out by spamming failed logins. The per-IP counter mitigates it (the attacker's own IP trips too); for purely anonymous endpoints prefer `by: ["ip"]`, and for high-value accounts consider a CAPTCHA step over a hard lock. See [Gotchas](#gotchas).
+
 ## How it behaves
 
 1. **Before the controller** — if the account or the IP is currently locked, it short-circuits with `429` and never touches the database or the bcrypt verify (this is also what neutralises the CPU-DoS angle of brute-forcing). The body carries `AuthErrorCodes.TooManyAttempts` (`EC004`).

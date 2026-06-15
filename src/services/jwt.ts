@@ -1,28 +1,12 @@
-import { config } from "@warlock.js/core";
-import {
-  createSigner,
-  createVerifier,
-  type Algorithm,
-  type SignerOptions,
-  type VerifierOptions,
-} from "fast-jwt";
-import ms from "ms";
+import { createSigner, createVerifier, type SignerOptions, type VerifierOptions } from "fast-jwt";
+import { authConfig } from "./auth-config";
 
-const getSecretKey = () => config.key("auth.jwt.secret") as string;
-const getAlgorithm = () => config.key("auth.jwt.algorithm", "HS256") as Algorithm;
+const getSecretKey = () => authConfig.accessToken.secret();
+const getAlgorithm = () => authConfig.accessToken.algorithm();
 
-// Refresh tokens may declare their own secret. When `auth.jwt.refresh.secret`
-// is unset/empty we fall back to the main JWT secret, matching the documented
-// optional behavior in `contracts/types.ts`.
-const getRefreshSecretKey = () =>
-  (config.key("auth.jwt.refresh.secret") || getSecretKey()) as string;
-// Refresh token validity — defaults to 7d when not configured. Opt in to
-// no-expiry semantics with `NO_EXPIRATION` (100y) from `contracts/types.ts`.
-const getRefreshTokenValidity = () => {
-  const expiresIn = config.key("auth.jwt.refresh.expiresIn") || "7d";
-
-  return ms(expiresIn);
-};
+// Refresh tokens may declare their own secret; when unset/empty we fall back to
+// the access-token secret (the documented optional behavior).
+const getRefreshSecretKey = () => authConfig.refreshToken.secret() || getSecretKey();
 
 /**
  * Token class. Stamped as the `tokenType` claim on every signed token and
@@ -74,11 +58,11 @@ export const jwt = {
    * @param token The JWT token to verify.
    * @returns The decoded token payload if verification is successful.
    */
-  async verify<T = any>(
+  async verify<T = unknown>(
     token: string,
     {
       key = getSecretKey(),
-      algorithms = getAlgorithm() ? [getAlgorithm()] : undefined,
+      algorithms = [getAlgorithm()],
       ...options
     }: VerifierOptions & { key?: string } = {},
   ): Promise<T> {
@@ -110,7 +94,7 @@ export const jwt = {
   /**
    * Verify the given refresh token.
    */
-  async verifyRefreshToken<T = any>(
+  async verifyRefreshToken<T = unknown>(
     token: string,
     {
       key = getRefreshSecretKey(),

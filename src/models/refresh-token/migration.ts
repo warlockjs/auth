@@ -20,6 +20,10 @@ export const RefreshTokenMigration = migrate(RefreshToken, {
     this.timestamp("revoked_at").nullable();
     this.json("device_info").nullable();
 
+    // Composite index for the per-user active-session lookups
+    // (revokeAllFor / enforceMax / activeFor all filter on user_id + user_type).
+    this.index(["user_id", "user_type"]);
+
     // Timestamps
     this.timestamps();
   },

@@ -15,7 +15,7 @@ type RefreshTokenOutput = { token: string; expiresAt: string };
 
 type TokenPair = {
   accessToken: AccessTokenOutput;
-  refreshToken?: RefreshTokenOutput;   // omitted if config.auth.jwt.refresh.enabled = false
+  refreshToken?: RefreshTokenOutput;   // omitted if config.auth.refreshToken.enabled = false
 };
 ```
 
@@ -34,7 +34,7 @@ const refresh = await authService.createRefreshToken(user, deviceInfo);
 const pair = await authService.createTokenPair(user, deviceInfo);
 ```
 
-`createTokenPair` is the typical issuance path. It respects `config.auth.jwt.refresh.enabled` — if disabled, returns only `accessToken`.
+`createTokenPair` is the typical issuance path. It respects `config.auth.refreshToken.enabled` — if disabled, returns only `accessToken`.
 
 ## Refresh with rotation — `refreshTokens`
 
@@ -48,7 +48,7 @@ What happens internally:
 1. Verify the JWT signature on the old refresh token.
 2. Find the row in `RefreshToken` — must exist + not be revoked.
 3. Look up the user via `config.auth.userType[token.userType]`.
-4. **Rotation** (default — `config.auth.jwt.refresh.rotation = true`): revoke the old refresh token, create a new pair from the same `family_id`.
+4. **Rotation** (default — `config.auth.refreshToken.rotation = true`): revoke the old refresh token, create a new pair from the same `family_id`.
 5. **No rotation**: mark the old as "used" but keep it valid.
 
 **Replay detection.** If the old refresh token is presented again after rotation (already revoked but still in the DB):
@@ -92,7 +92,7 @@ Use this for "active sessions" UIs. Revoke a specific session by calling `.revok
 await authService.removeAccessToken(user, accessTokenString);
 
 // Specific refresh token (via the RefreshToken instance)
-const rt = await RefreshToken.first({ token: refreshString });
+const rt = await RefreshToken.findByToken(refreshString);
 await rt?.revoke();
 
 // All access tokens for a user
@@ -108,7 +108,7 @@ await authService.revokeTokenFamily(familyId);
 ## Max refresh tokens per user
 
 ```ts
-// In config.auth.jwt.refresh:
+// In config.auth.refreshToken:
 {
   maxPerUser: 5,   // default
 }
@@ -120,7 +120,7 @@ When issuing a new refresh token, the service counts active tokens for the user 
 
 ```ts
 const cleaned = await authService.cleanupExpiredTokens();
-// Returns: number of expired refresh tokens removed.
+// Returns: number of expired refresh tokens removed (also purges expired access-token rows).
 // Fires "token.expired" event per token + "cleanup.completed" with the count.
 ```
 
@@ -146,19 +146,19 @@ For low-level JWT signing/verification (outside the authService flow):
 ```ts
 import { jwt } from "@warlock.js/auth";
 
-const token = await jwt.generate(payload, { expiresIn: 3600 });
+const token = await jwt.generate(payload, { expiresIn: "1h" }); // string or ms; a bare number is milliseconds
 const decoded = await jwt.verify(token);
 
 const refreshToken = await jwt.generateRefreshToken(payload, { expiresIn });
 const decodedRefresh = await jwt.verifyRefreshToken(refreshToken);
 ```
 
-The package signs access and refresh tokens with independent secrets — `config.auth.jwt.secret` and `config.auth.jwt.refresh.secret`. Setting a distinct `refresh.secret` is recommended: it prevents an access-token compromise from forging refresh tokens (and vice versa). The refresh secret is **optional** — when `config.auth.jwt.refresh.secret` is unset, refresh tokens fall back to the main `config.auth.jwt.secret`, so refresh works out of the box without a second secret.
+The package signs access and refresh tokens with independent secrets — `config.auth.accessToken.secret` and `config.auth.refreshToken.secret`. Setting a distinct `refresh.secret` is recommended: it prevents an access-token compromise from forging refresh tokens (and vice versa). The refresh secret is **optional** — when `config.auth.refreshToken.secret` is unset, refresh tokens fall back to the main `config.auth.accessToken.secret`, so refresh works out of the box without a second secret.
 
 ## Things NOT to do
 
 - Don't use raw JWT libraries directly. The package handles signing, verification, secret loading, and the access/refresh split.
-- Don't disable rotation (`config.auth.jwt.refresh.rotation = false`) unless you genuinely understand the tradeoff — you lose replay detection.
+- Don't disable rotation (`config.auth.refreshToken.rotation = false`) unless you genuinely understand the tradeoff — you lose replay detection.
 - Don't increase `maxPerUser` to a huge number "to be safe." Each active refresh token is a revocation surface; fewer simultaneous tokens means less attack surface.
 - Don't manually delete `AccessToken` rows in a service. The user might be hitting a request mid-revoke and get an inconsistent state. Use the `authService` helpers.
 

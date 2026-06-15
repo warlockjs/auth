@@ -96,7 +96,7 @@ async function logoutController(request: Request, response: Response) {
 The contract:
 - **Pass the access token** → that specific access-token row is deleted.
 - **Pass the refresh token** → that specific refresh-token row is revoked.
-- **Omit refresh token** → behavior depends on `config.auth.jwt.refresh.logoutWithoutToken`:
+- **Omit refresh token** → behavior depends on `config.auth.refreshToken.logoutWithoutToken`:
   - `"revoke-all"` (default) — every refresh token for this user is revoked. Fail-safe.
   - `"error"` — throws. Force the client to send the refresh token.
 
