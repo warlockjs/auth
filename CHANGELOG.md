@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 4.2.10
+
+### Fixed
+
+- `@mongez/copper`, `@mongez/events`, and `@mongez/reinforcements` are now regular `dependencies` instead of `peerDependencies` — matching every other framework package. They're framework-internal utilities your app never imports directly, so declaring them as peers forced consumers to install them and produced `unmet peer dependency` warnings on install. They now resolve transitively and silently.
+
 ## 4.2.0
 
 ### Added
