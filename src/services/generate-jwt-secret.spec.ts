@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const fileExistsAsync = vi.fn();
-const getFileAsync = vi.fn();
-const putFileAsync = vi.fn();
+const filesExists = vi.fn();
+const filesGet = vi.fn();
+const filesPut = vi.fn();
 const rootPath = vi.fn((file: string) => `/root/${file}`);
 const environment = vi.fn(() => "development");
 const randomToken = vi.fn(() => "GENERATED_SECRET");
 
 vi.mock("@warlock.js/fs", () => ({
-  fileExistsAsync: (...args: unknown[]) => fileExistsAsync(...args),
-  getFileAsync: (...args: unknown[]) => getFileAsync(...args),
-  putFileAsync: (...args: unknown[]) => putFileAsync(...args),
+  fs: {
+    files: {
+      exists: (...args: unknown[]) => filesExists(...args),
+      get: (...args: unknown[]) => filesGet(...args),
+      put: (...args: unknown[]) => filesPut(...args),
+    },
+  },
 }));
 
 vi.mock("@warlock.js/core", () => ({
@@ -36,31 +40,31 @@ beforeEach(() => {
 
 describe("generateJWTSecret", () => {
   it("does nothing (no write) when no env file can be found", async () => {
-    fileExistsAsync.mockResolvedValue(false);
+    filesExists.mockResolvedValue(false);
 
     await generateJWTSecret();
 
-    expect(getFileAsync).not.toHaveBeenCalled();
-    expect(putFileAsync).not.toHaveBeenCalled();
+    expect(filesGet).not.toHaveBeenCalled();
+    expect(filesPut).not.toHaveBeenCalled();
   });
 
   it("falls back to .env.development when .env is absent in development", async () => {
     // .env missing, .env.development present
-    fileExistsAsync.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    getFileAsync.mockResolvedValue("");
-    putFileAsync.mockResolvedValue(undefined);
+    filesExists.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    filesGet.mockResolvedValue("");
+    filesPut.mockResolvedValue(undefined);
 
     await generateJWTSecret();
 
     expect(rootPath).toHaveBeenCalledWith(".env.development");
-    expect(getFileAsync).toHaveBeenCalledWith("/root/.env.development");
+    expect(filesGet).toHaveBeenCalledWith("/root/.env.development");
   });
 
   it("falls back to .env.production when .env is absent in production", async () => {
     environment.mockReturnValue("production");
-    fileExistsAsync.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    getFileAsync.mockResolvedValue("");
-    putFileAsync.mockResolvedValue(undefined);
+    filesExists.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    filesGet.mockResolvedValue("");
+    filesPut.mockResolvedValue(undefined);
 
     await generateJWTSecret();
 
@@ -68,14 +72,14 @@ describe("generateJWTSecret", () => {
   });
 
   it("writes both secrets when neither is present", async () => {
-    fileExistsAsync.mockResolvedValue(true);
-    getFileAsync.mockResolvedValue("APP_NAME=demo\n");
-    putFileAsync.mockResolvedValue(undefined);
+    filesExists.mockResolvedValue(true);
+    filesGet.mockResolvedValue("APP_NAME=demo\n");
+    filesPut.mockResolvedValue(undefined);
 
     await generateJWTSecret();
 
-    expect(putFileAsync).toHaveBeenCalledTimes(1);
-    const [, written] = putFileAsync.mock.calls[0];
+    expect(filesPut).toHaveBeenCalledTimes(1);
+    const [, written] = filesPut.mock.calls[0];
     expect(written).toContain("JWT_SECRET=GENERATED_SECRET");
     expect(written).toContain("JWT_REFRESH_SECRET=GENERATED_SECRET");
     // original contents are preserved
@@ -85,24 +89,24 @@ describe("generateJWTSecret", () => {
   });
 
   it("adds only the refresh secret when JWT_SECRET already exists", async () => {
-    fileExistsAsync.mockResolvedValue(true);
-    getFileAsync.mockResolvedValue("JWT_SECRET=already-here\n");
-    putFileAsync.mockResolvedValue(undefined);
+    filesExists.mockResolvedValue(true);
+    filesGet.mockResolvedValue("JWT_SECRET=already-here\n");
+    filesPut.mockResolvedValue(undefined);
 
     await generateJWTSecret();
 
-    const [, written] = putFileAsync.mock.calls[0];
+    const [, written] = filesPut.mock.calls[0];
     expect(written).toContain("JWT_REFRESH_SECRET=GENERATED_SECRET");
     // it must not append a second JWT_SECRET line
     expect(written.match(/JWT_SECRET=/g)).toHaveLength(1);
   });
 
   it("does not write when both secrets already exist", async () => {
-    fileExistsAsync.mockResolvedValue(true);
-    getFileAsync.mockResolvedValue("JWT_SECRET=a\nJWT_REFRESH_SECRET=b\n");
+    filesExists.mockResolvedValue(true);
+    filesGet.mockResolvedValue("JWT_SECRET=a\nJWT_REFRESH_SECRET=b\n");
 
     await generateJWTSecret();
 
-    expect(putFileAsync).not.toHaveBeenCalled();
+    expect(filesPut).not.toHaveBeenCalled();
   });
 });

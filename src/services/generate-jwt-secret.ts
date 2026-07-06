@@ -1,4 +1,4 @@
-import { fileExistsAsync, getFileAsync, putFileAsync } from "@warlock.js/fs";
+import { fs } from "@warlock.js/fs";
 import { Random } from "@mongez/reinforcements";
 import { environment, rootPath } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
@@ -10,17 +10,17 @@ export async function generateJWTSecret() {
 
   const environmentMode = environment();
 
-  if (!(await fileExistsAsync(envFile))) {
+  if (!(await fs.files.exists(envFile))) {
     const envFileType = environmentMode === "production" ? ".env.production" : ".env.development";
     envFile = rootPath(envFileType);
   }
 
-  if (!(await fileExistsAsync(envFile))) {
+  if (!(await fs.files.exists(envFile))) {
     log.error("jwt", "error", ".env file not found");
     return;
   }
 
-  let contents = await getFileAsync(envFile);
+  let contents = await fs.files.get(envFile);
 
   const hasJwtSecret = contents.includes("JWT_SECRET");
   const hasJwtRefreshSecret = contents.includes("JWT_REFRESH_SECRET");
@@ -56,6 +56,6 @@ JWT_REFRESH_SECRET=${jwtRefreshSecret}
 
   if (secretsToAdd) {
     contents += secretsToAdd;
-    await putFileAsync(envFile, contents);
+    await fs.files.put(envFile, contents);
   }
 }
