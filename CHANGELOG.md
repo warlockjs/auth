@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.10.0
+
+### Changed
+
+- `protect-routes` documents two things that were previously only discoverable by reading source: that `authMiddleware` gates on **user type by flat string match** and cannot express a permission matrix, role hierarchy, or who-may-act-on-whom — with a worked pointer to `@warlock.js/access` (`gate`, `can`, `definePolicy`) for exactly that; and that auth is **bearer-token by design**, with cookie sessions and CSRF being app-level work rather than an omission
+
 ## 4.2.11
 
 ### Changed
