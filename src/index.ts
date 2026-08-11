@@ -1,4 +1,5 @@
 export * from "./commands/auth-cleanup-command";
+export * from "./commands/auth-purge-never-expiring-command";
 export * from "./commands/jwt-secret-generator-command";
 export * from "./contracts";
 export * from "./middleware";

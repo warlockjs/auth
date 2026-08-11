@@ -44,12 +44,18 @@ request.decodedAccessToken = <decoded JWT payload>;
 
 The user is loaded via `Model.find(decodedToken.id)` against the `config.auth.userType[userType]` class. If the user no longer exists (deleted), the access token row is destroyed and the request gets 401.
 
+A token passes three separate checks, in order — a token can fail any one of them while satisfying the other two:
+
+1. **The JWT verifies** — signature, algorithm, `tokenType`, and (since 4.12.0) the presence of an `exp` claim that has not passed. A token with *no* `exp` is rejected: there is no deadline to check, so it would otherwise verify indefinitely.
+2. **The access-token row still exists** — deleting it (logout) invalidates the token immediately, before its JWT expiry.
+3. **The row's own `expires_at` has not passed** (since 4.12.0). The database is the authority on the session: a row whose expiry has elapsed is rejected and deleted, even if the JWT itself is still within its lifetime. A row with a missing or unparseable `expires_at` is treated as expired, not as never-expiring.
+
 On failure, the middleware returns one of these 401 responses:
 
 | Error code | When |
 | --- | --- |
 | `MissingAccessToken` | No `Authorization` header |
-| `InvalidAccessToken` | Token doesn't verify (signature, expired, doesn't match DB) |
+| `InvalidAccessToken` | Token doesn't verify (signature, missing/passed `exp`, wrong token type), has no DB row, or the row's `expires_at` has passed |
 | `Unauthorized` | Token valid but user-type isn't in the allowed list |
 
 ## Reading the user in a controller

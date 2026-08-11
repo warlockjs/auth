@@ -95,8 +95,18 @@ Your subclass inherits and may override these statics — the service calls them
 | `revokeAllFor(user)` / `revokeFamily(id)` | revoke a set, returning the revoked rows |
 | `enforceMax(user, max)` | cap concurrent refresh tokens |
 | `purgeExpired()` | delete expired rows (CLI cleanup) |
+| `findNeverExpiring()` / `purgeNeverExpiring()` | find/delete rows that can never expire (CLI remediation) |
 
-If you rename a column, override the statics that reference it so they map to your name — the service depends on the method, not the column.
+Plus two instance getters, both of which the route gate consults on every request:
+
+| Getter | Role |
+| --- | --- |
+| `isExpired` | whether the row's persisted expiry has passed — **the middleware rejects the request when this is `true`** |
+| `neverExpires` | whether nothing can ever retire the row (unusable `expires_at`, or a token with no `exp` claim) |
+
+If you rename a column, override the statics **and these getters** so they map to your name — the service depends on the method, not the column.
+
+⚠️ **Do not drop `isExpired`.** The middleware treats a row that cannot answer as **expired** and rejects the request, so removing the getter locks every user out rather than letting them through. That direction is deliberate: the fail-open reading is what let expired sessions stay usable before 4.12.0.
 
 ## Things NOT to do
 

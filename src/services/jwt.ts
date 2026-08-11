@@ -33,6 +33,35 @@ function assertTokenType(decoded: unknown, expected: TokenType): void {
   }
 }
 
+/**
+ * Claims no token may be missing, whatever the caller asks for.
+ *
+ * A JWT with no `exp` is not "a token with a long life" — it is a credential
+ * with *no* life, because a verifier with no deadline to check simply succeeds,
+ * forever (measured against `fast-jwt@6.2.4`: a token with no `exp` verifies
+ * unchanged at `clockTimestamp` + 100 years). Nothing in this package can mint
+ * one as of 4.12.0, but tokens minted by an earlier version are already in the
+ * wild, so the rejection lives on the *verify* side where it catches a token
+ * from any version, including one signed by a service this package never ran.
+ *
+ * There is no legitimate source to preserve: an app that wants a token that
+ * effectively never expires sets `expiresIn: NO_EXPIRATION` (`"100y"`), which
+ * mints a real `exp` roughly a century out (measured: `ms("100y")` ⇒
+ * `3155760000000`, `exp - iat` ⇒ `3155760000` seconds). "No deadline" and "a
+ * distant deadline" are different things, and only the second one is asked for.
+ */
+const REQUIRED_CLAIMS = ["exp"];
+
+/**
+ * Union the caller's `requiredClaims` with the mandatory ones — a caller may
+ * add requirements, never drop them.
+ */
+function withRequiredClaims(callerClaims?: string[]): string[] {
+  if (!callerClaims?.length) return REQUIRED_CLAIMS;
+
+  return [...new Set([...callerClaims, ...REQUIRED_CLAIMS])];
+}
+
 export const jwt = {
   /**
    * Generate a new JWT token for the user.
@@ -63,10 +92,16 @@ export const jwt = {
     {
       key = getSecretKey(),
       algorithms = [getAlgorithm()],
+      requiredClaims,
       ...options
     }: VerifierOptions & { key?: string } = {},
   ): Promise<T> {
-    const verify = createVerifier({ key, ...options, algorithms });
+    const verify = createVerifier({
+      key,
+      ...options,
+      algorithms,
+      requiredClaims: withRequiredClaims(requiredClaims),
+    });
 
     const decoded = await verify(token as string);
 
@@ -99,10 +134,16 @@ export const jwt = {
     {
       key = getRefreshSecretKey(),
       algorithms = [getAlgorithm()],
+      requiredClaims,
       ...options
     }: VerifierOptions & { key?: string } = {},
   ): Promise<T> {
-    const verify = createVerifier({ key, algorithms, ...options });
+    const verify = createVerifier({
+      key,
+      algorithms,
+      ...options,
+      requiredClaims: withRequiredClaims(requiredClaims),
+    });
 
     const decoded = await verify(token);
 

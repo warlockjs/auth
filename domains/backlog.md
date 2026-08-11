@@ -4,6 +4,111 @@ Findings log, newest first. Captures source bugs, doc/skill drift, and release-q
 
 ---
 
+## 2026-08-10 — 🔴 `expiresIn` validation (issue #25)
+
+Source report: `plans/2026-08-10-auth-an-unparseable-expiresIn-silently-mints-a-token-with-no-exp-claim.md`.
+Measured against `ms@2.1.3` and `fast-jwt@6.2.4` **as installed in this workspace** (the report was written against `fast-jwt@6.3.2`; the difference matters for one sub-claim, noted below).
+
+### FIXED — an unparseable or non-positive `expiresIn` minted a token with no `exp` claim
+
+**Root cause, confirmed.** `auth.service.ts` tested the *raw config string* for truthiness (`expiresInConfig ? ms(expiresInConfig) : ms("1h")`), so `"30dayz"` — truthy, unparseable — skipped the `1h` fallback and reached the signer as `undefined`. The refresh path had no fallback at all. Both `as ms.StringValue` casts were what let arbitrary config text compile against `ms`'s template-literal type; both are gone.
+
+**Proven, before the fix** (temporary evidence spec, deleted after capture):
+
+```
+THREW AFTER SIGNING: Invalid time value
+jwt.generate called with: {}
+AccessToken.issue expiresAt: Invalid Date
+RESULT: {"token":"signed-access-token","expiresAt":"2026-08-10T20:23:50.202Z"}
+jwt.generate called with: {"expiresIn":0}
+ ✓ CURRENT BEHAVIOUR with accessToken.expiresIn = '30dayz' > signs a token with expiresIn undefined and persists an Invalid Date
+ ✓ CURRENT BEHAVIOUR with accessToken.expiresIn = '0d' > returns a token whose expiry is already now — no error at all
+```
+
+(`jwt.generate called with: {}` is `JSON.stringify` dropping `undefined`; the passing assertion was `toHaveBeenCalledWith(expect.any(Object), { expiresIn: undefined })`.)
+
+**Two corrections to the report, both measured:**
+
+1. **In this source tree (4.11.0) the access path is not fully silent for `"30dayz"`.** `generateAccessToken` ends with `expiresAt.toISOString()`, and `Invalid Date.toISOString()` throws `RangeError: Invalid time value` — *after* the no-`exp` token was signed and *after* the row was persisted with `Invalid Date`. The caller sees an opaque error naming nothing; the corrupt row survives. The reported "login succeeds silently" symptom matches the published 4.10.0 esm, which returned the `Date` object directly.
+2. **`"0d"` is worse than "an already-expired token".** `fast-jwt` only validates `expiresIn` when it is truthy (`signer.js:234`), so `0` skips validation *and* the `exp` claim is omitted entirely (`signer.js:97`). `"0d"` therefore mints the same never-expiring credential as `"30dayz"`, but silently and with a row that claims it expired immediately. This is the case a naive undefined-only guard passes.
+3. Ancillary: `ms(2592000)` returns the **string** `"43m"`, not a number — `ms` formats numbers rather than parsing them. The 43-minute figure is right; the mechanism is a string that turns `Date.now() + expiresIn` into an `Invalid Date`.
+
+**The fix.** `authConfig.accessToken.expiresInMs()` / `refreshToken.expiresInMs()` (in `auth-config.ts`) parse and validate, throwing `auth.<key>: <value> is not a valid ms duration — …`. Both service call sites now use them, and the refresh path validates *before* `enforceMax`, so a bad value can't revoke a user's oldest session on its way to failing. A silent substitution of `1h` was rejected as the fix: it trades one unchosen lifetime for another, just as quietly.
+
+**Placement.** Validation lives in `auth-config.ts` (config-resolution layer) but fires at first token issue, not at boot. Earlier is not reachable from inside this package: `auth` has no boot hook of its own — `src/index.ts` is pure re-exports and config is read lazily through `config.key` from `@warlock.js/core`. A true boot-time gate needs a hook in `core/`, which was out of fence for this change. **OPEN:** consider a `validateAuthConfig()` export an app can call from its bootstrap, or a core-level config-validation hook, so a typo fails the deploy rather than the first login.
+
+**Behaviour change, deliberate:** an empty-string `expiresIn` (e.g. `env("JWT_TTL")` with the variable unset) and a bare number now throw instead of silently falling back / corrupting the expiry. Documented in `CHANGELOG.md`, `README.md`, and the `auth-basics` / `manage-tokens` skills.
+
+### FIXED (issue #27) — nothing ever rejected a token that has no `exp` claim, and the persisted `expires_at` was never enforced
+
+Not folded into the fix above; it is the reason the defect was exploitable rather than merely wrong.
+
+Measured directly against `fast-jwt@6.2.4`:
+
+```
+payload: {"id":1,"tokenType":"access","iat":1786393444}
+verify (now): {"id":1,"tokenType":"access","iat":1786393444}
+verify (+100y): {"id":1,"tokenType":"access","iat":1786393444}
+```
+
+`jwt.verify` passes no `maxAge` and no `clockTimestamp`, so a token minted without `exp` verifies **indefinitely** — the report's untested suspicion is correct. Worse, `authMiddleware` (`src/middleware/auth.middleware.ts:47-61`) checks only that the token *row still exists*; it never compares `expires_at` to now. The only thing that removes such a row is the out-of-band `auth.cleanup` command (`expires_at < new Date()`), and a row whose `expires_at` is `Invalid Date` never satisfies that predicate — so it is never purged either.
+
+**Action to decide (not taken here):** either have `authMiddleware` reject a decoded token with no `exp`, or have it enforce the persisted `expires_at`. Both are policy changes beyond the scope of #25.
+
+---
+
+## 2026-08-11 — 🔴 the other half of #25: tokens already issued (issue #27)
+
+Source: the OPEN item above. #25 stopped never-expiring tokens being **minted**; it did nothing about the ones already **issued**. Three parts, all shipped in 4.12.0.
+
+### Red evidence, captured before any change (temporary probe specs, deleted after capture)
+
+```
+ms(NO_EXPIRATION="100y") = 3155760000000 (number)
+NO_EXPIRATION token claims: {"id":1,"iat":1786418660,"exp":4942178660}
+exp - iat = 3155760000 seconds
+
+payload:        {"id":1,"tokenType":"access","iat":1786418660}
+verify (+100y): {"id":1,"tokenType":"access","iat":1786418660}
+
+row expires_at        = 2025-08-11T03:24:20.094Z
+response.unauthorized called: 0 time(s)
+request.user          = {"id":1,"userType":"user"}
+
+purgeExpired removed: 1
+genuinely-expired destroyed: 1
+poisoned destroyed:          0
+poisoned expires_at:         Invalid Date
+```
+
+All three claims in the source report reproduce against `fast-jwt@6.2.4` / `ms@2.1.3` as installed.
+
+**Part 1 — reject a token with no `exp`.** `requiredClaims: ["exp"]` on both `jwt.verify` and `jwt.verifyRefreshToken`, unioned with (never replaced by) a caller's own `requiredClaims`. The precondition was checked rather than assumed: `NO_EXPIRATION` (`"100y"`) produces a **real** `exp` ≈ a century out, so no supported configuration wants a token without one, and the rejection costs nobody a legitimate use.
+
+Placed on *verify*, not on issue: the tokens in question were minted by a version that no longer runs, so a guard on the issue path reaches none of them.
+
+**Part 2 — enforce the persisted `expires_at`.** `AccessToken.isExpired` (new) is consulted by `authMiddleware`, which previously asserted only that the row existed. Both models' `isExpired` **fail closed**: a missing or unparseable expiry counts as expired. `RefreshToken.isExpired` previously answered `false` for a missing `expires_at` ("never expires") — that pinned behaviour was deliberately flipped, since it granted an unlimited life to exactly the malformed rows. The dead row is deleted on rejection.
+
+**Part 3 — remediation: `warlock auth.purge-never-expiring` (+ `--dry-run`).** Chosen over a migration or documented SQL, for reasons that came out of measurement rather than preference:
+
+- **A date predicate cannot express the target.** `Invalid Date` compares `false` against every date, so no `WHERE` reaches such a row.
+- **The definitive signal is not in a column.** "This token has no `exp`" lives inside the JWT string. The command decodes the stored token (no signature check — it reads claims, not trust); SQL cannot.
+- **The stores disagree about what the row even looks like** (both measured here, in isolation, from the installed drivers):
+  - `bson` serialises an `Invalid Date` to **epoch 0** → a MongoDB row reads `1970-01-01T00:00:00Z`, which *is* purgeable by `expires_at < now` and *is* rejected by part 2.
+  - `pg`'s `prepareValue` serialises it to the literal `0NaN-NaN-NaNTNaN:NaN:NaN.NaN+NaN:NaN`, which a `timestamp` column rejects → the `INSERT` most likely failed and no row was written at all (the token was still signed and handed to the client; with no row, the middleware rejects it).
+
+  **This is a correction to the framing in the source report.** "Rows with an `Invalid Date` accumulate permanently" is true of the in-memory model and of any store that round-trips a NaN date, but was *not* demonstrated for either supported driver as installed. Not verified end-to-end against a live MongoDB or Postgres — the harnesses in `tests/integration/**` need real servers. The remediation is scoped to be correct either way: it selects on the token's missing `exp` **or** an unusable `expires_at`, so it finds the poisoned credential regardless of which shape the date took.
+
+The CHANGELOG carries a **Remediation** section naming who is affected, what to run, and per-store queries an operator can run **without deploying anything** — the owner's stated preference, honoured for the row-level shapes; the `exp`-claim check is only reachable from code, and that is stated there rather than glossed.
+
+**Suite:** 158 → 200 tests, 14 files, all green. One test was replaced rather than added: `jwt.spec.ts` "does not stamp an exp claim when expiresIn is omitted" asserted that a no-`exp` token *verifies*, which is now the defect. Twelve other specs that minted tokens without `expiresIn` were given a lifetime — they were describing a token this package can no longer issue.
+
+**OPEN — carried forward from #25, untouched:** validating auth config at **boot** rather than at first token issue still needs a hook in `core/` (out of fence; #29-adjacent).
+
+**OPEN — `tokenHasExpClaim` decodes without verifying.** A row whose token cannot be decoded at all answers "no `exp`" and is therefore purged. That is the safe direction (an undecodable token cannot authenticate anyway), but it means the remediation deletes garbage rows as well as poisoned ones. Deliberate; noted in case an operator expects a purely conservative tool.
+
+---
+
 ## 2026-06-01 — Release-polish pass (skills + tests + docs)
 
 ### OPEN — `tsconfig.json` was deleted from the package root

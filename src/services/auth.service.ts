@@ -1,7 +1,6 @@
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
 import { config, hashPassword, verifyPassword } from "@warlock.js/core";
-import ms from "ms";
 import type { AccessTokenOutput, DeviceInfo, LoginResult, TokenPair } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
@@ -46,10 +45,10 @@ class AuthService {
    */
   public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
-    const expiresInConfig = authConfig.accessToken.expiresIn();
-    const expiresIn = expiresInConfig
-      ? ms(expiresInConfig as ms.StringValue)
-      : ms("1h"); // default 1 hour
+    // Validated before anything is signed or persisted: an unusable lifetime
+    // throws naming the config key rather than minting a token whose expiry
+    // nobody chose (defaults to 1h when unset).
+    const expiresIn = authConfig.accessToken.expiresInMs();
 
     const token = await jwt.generate(data, { expiresIn });
     const expiresAt = new Date(Date.now() + expiresIn);
@@ -69,6 +68,11 @@ class AuthService {
   ): Promise<RefreshToken | undefined> {
     if (!authConfig.refreshToken.enabled()) return;
 
+    // Validate the lifetime first — before the per-user cap is enforced, before
+    // anything is signed — so a bad value can never revoke a user's oldest
+    // session on its way to failing.
+    const expiresIn = authConfig.refreshToken.expiresInMs();
+
     const familyId = deviceInfo?.familyId || Random.string(32);
 
     const payload = {
@@ -77,7 +81,6 @@ class AuthService {
       familyId,
     };
 
-    const expiresIn = ms(authConfig.refreshToken.expiresIn() as ms.StringValue);
     const expiresAt = new Date(Date.now() + expiresIn).toISOString();
 
     await this.refreshTokenModel.enforceMax(user, authConfig.refreshToken.maxPerUser());
@@ -346,6 +349,51 @@ class AuthService {
     authEvents.emit("cleanup.completed", expiredTokens.length);
 
     return expiredTokens.length;
+  }
+
+  /**
+   * Find every persisted token — access and refresh — that can never retire
+   * itself: an unusable `expires_at`, or a token carrying no `exp` claim.
+   *
+   * This is the remediation read for the pre-4.12.0 `expiresIn` defect (#25).
+   * Nothing else surfaces these rows: `auth.cleanup` selects `expires_at < now`,
+   * which an `Invalid Date` never satisfies, and a row whose date column is
+   * perfectly fine can still hold a token with no deadline in it. Read-only —
+   * pair with {@link purgeNeverExpiringTokens} to act on the answer.
+   */
+  public async findNeverExpiringTokens(): Promise<{
+    accessTokens: AccessToken[];
+    refreshTokens: RefreshToken[];
+  }> {
+    return {
+      accessTokens: await this.accessTokenModel.findNeverExpiring(),
+      refreshTokens: await this.refreshTokenModel.findNeverExpiring(),
+    };
+  }
+
+  /**
+   * Revoke every never-expiring token by deleting its row, emitting
+   * `token.revoked` per refresh token. Drives `warlock auth.purge-never-expiring`.
+   *
+   * Access tokens first: deleting one is immediate revocation, while a refresh
+   * token left in place for a moment can only mint an access token through a
+   * verifier that now rejects it for the missing `exp`.
+   */
+  public async purgeNeverExpiringTokens(): Promise<{
+    accessTokens: number;
+    refreshTokens: number;
+  }> {
+    const accessTokens = await this.accessTokenModel.purgeNeverExpiring();
+    const refreshTokens = await this.refreshTokenModel.purgeNeverExpiring();
+
+    // `token.expired` (the event `auth.cleanup` already emits for a removed
+    // refresh token) rather than `token.revoked`, which carries a loaded `Auth`
+    // this batch path has no reason to fetch a user row for.
+    for (const token of refreshTokens) {
+      authEvents.emit("token.expired", token);
+    }
+
+    return { accessTokens: accessTokens.length, refreshTokens: refreshTokens.length };
   }
 
   /**

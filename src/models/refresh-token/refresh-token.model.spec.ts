@@ -1,3 +1,4 @@
+import { createSigner } from "fast-jwt";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const modelFirst = vi.fn();
@@ -74,6 +75,14 @@ function buildQueryStub(rows: unknown[]) {
 
 const user = { id: 7, userType: "user" } as never;
 
+/** A refresh token with a real `exp`, and one minted without a lifetime. */
+const TOKEN_WITH_EXP = createSigner({ key: "spec-secret-0123456789", expiresIn: 3_600_000 })({
+  userId: 7,
+}) as unknown as string;
+const TOKEN_WITHOUT_EXP = createSigner({ key: "spec-secret-0123456789" })({
+  userId: 7,
+}) as unknown as string;
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -82,7 +91,17 @@ describe("RefreshToken validity getters", () => {
   it("isExpired reflects expires_at relative to now", () => {
     expect(buildToken({ expires_at: new Date(Date.now() + 60_000) }).isExpired).toBe(false);
     expect(buildToken({ expires_at: new Date(Date.now() - 60_000) }).isExpired).toBe(true);
-    expect(buildToken({ expires_at: undefined }).isExpired).toBe(false);
+  });
+
+  // Flipped in 4.12.0 (#27). This previously asserted the opposite — a missing
+  // `expires_at` meant "never expires" — which is the same fail-open reading
+  // that let an `Invalid Date` row live forever. `expires_at` is `required` in
+  // the schema: a row that cannot say when it dies is malformed, not immortal.
+  it("treats an unusable expires_at as expired rather than as never-expiring", () => {
+    expect(buildToken({ expires_at: undefined }).isExpired).toBe(true);
+    expect(buildToken({ expires_at: null }).isExpired).toBe(true);
+    expect(buildToken({ expires_at: new Date("30dayz") }).isExpired).toBe(true);
+    expect(buildToken({ expires_at: undefined }).isValid).toBe(false);
   });
 
   it("isRevoked reflects the presence of revoked_at", () => {
@@ -247,5 +266,30 @@ describe("RefreshToken statics", () => {
     expect(rows[0].destroy).toHaveBeenCalledOnce();
     expect(rows[1].destroy).toHaveBeenCalledOnce();
     expect(result).toBe(rows);
+  });
+
+  it("findNeverExpiring selects the rows no date predicate can reach", async () => {
+    const healthy = buildToken({ token: TOKEN_WITH_EXP, expires_at: new Date(Date.now() + 60_000) });
+    const poisoned = buildToken({ token: TOKEN_WITHOUT_EXP, expires_at: new Date("30dayz") });
+
+    modelQuery.mockReturnValue(buildQueryStub([healthy, poisoned]));
+
+    expect(await RefreshToken.findNeverExpiring()).toEqual([poisoned]);
+  });
+
+  it("purgeNeverExpiring destroys only the never-expiring rows", async () => {
+    const healthy = buildToken({ token: TOKEN_WITH_EXP, expires_at: new Date(Date.now() + 60_000) });
+    const poisoned = buildToken({ token: TOKEN_WITHOUT_EXP, expires_at: new Date("30dayz") });
+
+    Object.defineProperty(healthy, "destroy", { value: vi.fn() });
+    Object.defineProperty(poisoned, "destroy", { value: vi.fn() });
+
+    modelQuery.mockReturnValue(buildQueryStub([healthy, poisoned]));
+
+    const purged = await RefreshToken.purgeNeverExpiring();
+
+    expect(purged).toEqual([poisoned]);
+    expect(poisoned.destroy).toHaveBeenCalledOnce();
+    expect(healthy.destroy).not.toHaveBeenCalled();
   });
 });

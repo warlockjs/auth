@@ -55,7 +55,11 @@ export type AccessTokenConfig = {
    */
   algorithm?: Algorithm;
   /**
-   * Access-token lifetime — any value the `ms` package accepts.
+   * Access-token lifetime — a duration string `ms` parses to a **positive**
+   * number of milliseconds. A value `ms` cannot parse (`"30dayz"`), a
+   * non-positive one (`"0d"`), or a bare number throws naming this key on the
+   * first token issue: each of them would otherwise sign a token with no `exp`
+   * claim at all.
    * @example "1h" or NO_EXPIRATION
    * @default "1h"
    */
@@ -82,7 +86,9 @@ export type RefreshTokenConfig = {
    */
   secret?: string;
   /**
-   * Refresh-token lifetime — any value the `ms` package accepts.
+   * Refresh-token lifetime — a duration string `ms` parses to a **positive**
+   * number of milliseconds; an unusable value throws naming this key on issue
+   * (see {@link AccessTokenConfig.expiresIn}).
    * @example "7d" or "1w"
    * @default "7d"
    */

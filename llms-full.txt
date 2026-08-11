@@ -78,6 +78,21 @@ export default {
 };
 ```
 
+### Token lifetimes are validated — a bad one throws
+
+`expiresIn` (both blocks) must be a duration string the [`ms`](https://github.com/vercel/ms) package parses to a **positive** number: `"1h"`, `"30m"`, `"7d"`, `"30 days"`, or `NO_EXPIRATION` (`"100y"`). Anything else throws on the first token issue, naming the key:
+
+```
+auth.accessToken.expiresIn: "30dayz" is not a valid ms duration — use a positive duration string such as "1h", "7d", or NO_EXPIRATION.
+```
+
+That is deliberate. `ms` answers `undefined` for a string it can't parse (`"30dayz"`, `"thirty days"`) and `0` for `"0d"`, and a signer given either emits a JWT with **no `exp` claim** — a credential that never expires. A typo must not be able to produce that quietly, so it fails loudly instead of falling back to a default nobody asked for. Defaults still apply when the key is **absent**: `1h` for access, `7d` for refresh.
+
+Two values that look right and are not:
+
+- `expiresIn: 2592000` — a bare number. `ms` *formats* numbers instead of parsing them, so this is rejected; write `"30d"`.
+- `expiresIn: env("JWT_TTL")` where the variable is unset — resolves to `""` and is rejected. Give the env read a default: `env("JWT_TTL") || "1h"`.
+
 ## Pick a skill
 
 | If the task is about… | Load |
@@ -196,8 +211,18 @@ Your subclass inherits and may override these statics — the service calls them
 | `revokeAllFor(user)` / `revokeFamily(id)` | revoke a set, returning the revoked rows |
 | `enforceMax(user, max)` | cap concurrent refresh tokens |
 | `purgeExpired()` | delete expired rows (CLI cleanup) |
+| `findNeverExpiring()` / `purgeNeverExpiring()` | find/delete rows that can never expire (CLI remediation) |
 
-If you rename a column, override the statics that reference it so they map to your name — the service depends on the method, not the column.
+Plus two instance getters, both of which the route gate consults on every request:
+
+| Getter | Role |
+| --- | --- |
+| `isExpired` | whether the row's persisted expiry has passed — **the middleware rejects the request when this is `true`** |
+| `neverExpires` | whether nothing can ever retire the row (unusable `expires_at`, or a token with no `exp` claim) |
+
+If you rename a column, override the statics **and these getters** so they map to your name — the service depends on the method, not the column.
+
+⚠️ **Do not drop `isExpired`.** The middleware treats a row that cannot answer as **expired** and rejects the request, so removing the getter locks every user out rather than letting them through. That direction is deliberate: the fail-open reading is what let expired sessions stay usable before 4.12.0.
 
 ## Things NOT to do
 
@@ -673,12 +698,20 @@ For low-level JWT signing/verification (outside the authService flow):
 ```ts
 import { jwt } from "@warlock.js/auth";
 
-const token = await jwt.generate(payload, { expiresIn: "1h" }); // string or ms; a bare number is milliseconds
+const token = await jwt.generate(payload, { expiresIn: 3_600_000 }); // milliseconds
 const decoded = await jwt.verify(token);
 
 const refreshToken = await jwt.generateRefreshToken(payload, { expiresIn });
 const decodedRefresh = await jwt.verifyRefreshToken(refreshToken);
 ```
+
+⚠️ **`jwt.generate` / `jwt.generateRefreshToken` are the low-level escape hatch — `expiresIn` goes straight to `fast-jwt`.** It takes a number of milliseconds or an `ms`-style string, and rejects an unparseable string. What it does **not** reject is `undefined` or `0`: both skip the check and emit a token with **no `exp` claim**. Pass a positive value, and never pass the result of parsing a config string without checking it first.
+
+**`jwt.verify` / `jwt.verifyRefreshToken` require an `exp` claim** (since 4.12.0) and reject a token without one. There is no deadline to check on such a token, so verification would otherwise succeed indefinitely. `requiredClaims` is additive — `jwt.verify(token, { requiredClaims: ["iat"] })` requires `iat` **and** `exp`; you cannot opt out of `exp`. If you want a token that effectively never expires, use `expiresIn: NO_EXPIRATION` (`"100y"`), which stamps a real `exp` about a century out.
+
+If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — they are still in your token tables and no date-based cleanup can reach them.
+
+`authService.generateAccessToken` / `createRefreshToken` read `config.auth.accessToken.expiresIn` / `config.auth.refreshToken.expiresIn`, validate them, and throw naming the key if the value is not a positive `ms` duration — before anything is signed, persisted, or capped.
 
 The package signs access and refresh tokens with independent secrets — `config.auth.accessToken.secret` and `config.auth.refreshToken.secret`. Setting a distinct `refresh.secret` is recommended: it prevents an access-token compromise from forging refresh tokens (and vice versa). The refresh secret is **optional** — when `config.auth.refreshToken.secret` is unset, refresh tokens fall back to the main `config.auth.accessToken.secret`, so refresh works out of the box without a second secret.
 
@@ -820,12 +853,18 @@ request.decodedAccessToken = <decoded JWT payload>;
 
 The user is loaded via `Model.find(decodedToken.id)` against the `config.auth.userType[userType]` class. If the user no longer exists (deleted), the access token row is destroyed and the request gets 401.
 
+A token passes three separate checks, in order — a token can fail any one of them while satisfying the other two:
+
+1. **The JWT verifies** — signature, algorithm, `tokenType`, and (since 4.12.0) the presence of an `exp` claim that has not passed. A token with *no* `exp` is rejected: there is no deadline to check, so it would otherwise verify indefinitely.
+2. **The access-token row still exists** — deleting it (logout) invalidates the token immediately, before its JWT expiry.
+3. **The row's own `expires_at` has not passed** (since 4.12.0). The database is the authority on the session: a row whose expiry has elapsed is rejected and deleted, even if the JWT itself is still within its lifetime. A row with a missing or unparseable `expires_at` is treated as expired, not as never-expiring.
+
 On failure, the middleware returns one of these 401 responses:
 
 | Error code | When |
 | --- | --- |
 | `MissingAccessToken` | No `Authorization` header |
-| `InvalidAccessToken` | Token doesn't verify (signature, expired, doesn't match DB) |
+| `InvalidAccessToken` | Token doesn't verify (signature, missing/passed `exp`, wrong token type), has no DB row, or the row's `expires_at` has passed |
 | `Unauthorized` | Token valid but user-type isn't in the allowed list |
 
 ## Reading the user in a controller
@@ -1062,18 +1101,19 @@ Cleaner alternative: emit your own `user.registered` event from the controller a
 
 ---
 name: run-auth-commands
-description: 'Two bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env) and warlock auth.cleanup (removes expired refresh tokens). Register via registerJWTSecretGeneratorCommand() and registerAuthCleanupCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `cleanupExpiredTokens`, `command`; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
+description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
 ---
 
 # Run auth commands
 
-The package ships two CLI commands. Register them in `warlock.config.ts`; the framework picks them up.
+The package ships three CLI commands. Register them in `warlock.config.ts`; the framework picks them up.
 
 ## Register
 
 ```ts title="warlock.config.ts"
 import {
   registerAuthCleanupCommand,
+  registerAuthPurgeNeverExpiringCommand,
   registerJWTSecretGeneratorCommand,
 } from "@warlock.js/auth";
 import { defineConfig } from "@warlock.js/core";
@@ -1083,6 +1123,7 @@ export default defineConfig({
     commands: [
       registerJWTSecretGeneratorCommand(),
       registerAuthCleanupCommand(),
+      registerAuthPurgeNeverExpiringCommand(),
     ],
   },
 });
@@ -1141,6 +1182,23 @@ Out-of-process — works when you don't want the scheduler subsystem running in 
 Once a day is usually enough. The check is cheap (single indexed DELETE on `expires_at < now()`), and refresh tokens that have already expired don't grant access — cleanup is housekeeping, not security.
 
 If you have very-short-lived refresh tokens (1h expiry) and a million-user scale where the table grows fast, cleanup more often (hourly).
+
+## `warlock auth.purge-never-expiring` — one-off remediation
+
+```bash
+yarn warlock auth.purge-never-expiring --dry-run   # report only
+yarn warlock auth.purge-never-expiring             # report, then revoke
+```
+
+Register with `registerAuthPurgeNeverExpiringCommand()`.
+
+Finds every token row that **can never retire itself**, on two independent signals: an `expires_at` that is missing or unparseable, and a stored token carrying no `exp` claim. It reports `id` / `user_id` / `user_type` / `expires_at` per row — never the token string, which is a live credential until the row is deleted — and then deletes them. Affected users must log in again.
+
+**This is not a substitute for `auth.cleanup`, and `auth.cleanup` is not a substitute for it.** Cleanup selects `expires_at < now`; an `Invalid Date` compares `false` against *every* date, so such a row satisfies neither `< now` nor `> now` and no date predicate can ever reach it. The "no `exp` claim" signal is not in a column at all — it is inside the JWT.
+
+Run it once after upgrading to 4.12.0 **if any deployment ever ran an `expiresIn` that `ms` could not parse** (`"30dayz"`, `"0d"`, `""`, a bare number). Those configurations minted tokens that verify forever. It is safe to run when unaffected — it reports nothing and deletes nothing.
+
+Unlike `auth.cleanup`, do **not** schedule it: it is a full table scan (it must read rows to judge them, since neither signal is expressible as a `where`), and once the poisoned rows are gone, 4.12.0 cannot create more.
 
 ## Custom commands
 

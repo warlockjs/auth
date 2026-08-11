@@ -5,6 +5,8 @@ const accessTokenIssue = vi.fn();
 const accessTokenDeleteForUser = vi.fn();
 const accessTokenDeleteAllForUser = vi.fn();
 const accessTokenPurgeExpired = vi.fn();
+const accessTokenFindNeverExpiring = vi.fn();
+const accessTokenPurgeNeverExpiring = vi.fn();
 
 vi.mock("../models/access-token", () => ({
   AccessToken: {
@@ -12,6 +14,8 @@ vi.mock("../models/access-token", () => ({
     deleteForUser: (...args: unknown[]) => accessTokenDeleteForUser(...args),
     deleteAllForUser: (...args: unknown[]) => accessTokenDeleteAllForUser(...args),
     purgeExpired: (...args: unknown[]) => accessTokenPurgeExpired(...args),
+    findNeverExpiring: (...args: unknown[]) => accessTokenFindNeverExpiring(...args),
+    purgeNeverExpiring: (...args: unknown[]) => accessTokenPurgeNeverExpiring(...args),
   },
 }));
 
@@ -25,6 +29,8 @@ const refreshTokenRevokeAllFor = vi.fn();
 const refreshTokenRevokeFamily = vi.fn();
 const refreshTokenPurgeExpired = vi.fn();
 const refreshTokenActiveFor = vi.fn();
+const refreshTokenFindNeverExpiring = vi.fn();
+const refreshTokenPurgeNeverExpiring = vi.fn();
 
 vi.mock("../models/refresh-token", () => ({
   RefreshToken: {
@@ -37,6 +43,8 @@ vi.mock("../models/refresh-token", () => ({
     revokeFamily: (...args: unknown[]) => refreshTokenRevokeFamily(...args),
     purgeExpired: (...args: unknown[]) => refreshTokenPurgeExpired(...args),
     activeFor: (...args: unknown[]) => refreshTokenActiveFor(...args),
+    findNeverExpiring: (...args: unknown[]) => refreshTokenFindNeverExpiring(...args),
+    purgeNeverExpiring: (...args: unknown[]) => refreshTokenPurgeNeverExpiring(...args),
   },
 }));
 
@@ -85,6 +93,7 @@ vi.mock("@mongez/reinforcements", () => ({
   Random: { string: (...args: unknown[]) => randomString(...args) },
 }));
 
+import { NO_EXPIRATION } from "../contracts/types";
 import { authService } from "./auth.service";
 
 function buildUser(overrides: Record<string, unknown> = {}) {
@@ -135,6 +144,10 @@ beforeEach(() => {
   refreshTokenPurgeExpired.mockResolvedValue([]);
   refreshTokenActiveFor.mockResolvedValue([]);
   accessTokenPurgeExpired.mockResolvedValue(0);
+  accessTokenFindNeverExpiring.mockResolvedValue([]);
+  accessTokenPurgeNeverExpiring.mockResolvedValue([]);
+  refreshTokenFindNeverExpiring.mockResolvedValue([]);
+  refreshTokenPurgeNeverExpiring.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -190,6 +203,157 @@ describe("authService.generateAccessToken", () => {
     await authService.generateAccessToken(buildUser(), custom);
 
     expect(jwtGenerate).toHaveBeenCalledWith(custom, expect.any(Object));
+  });
+});
+
+/**
+ * A token lifetime is a security boundary: an `expiresIn` the `ms` package
+ * cannot turn into a positive number of milliseconds must fail loudly, because
+ * every quiet outcome is a wrong credential — `undefined` reaches the signer as
+ * a token with NO `exp` claim, and `0` mints one that is already expired.
+ */
+describe("authService expiresIn validation", () => {
+  function withConfig(key: string, value: unknown) {
+    configKey.mockImplementation((configuredKey: string, fallback?: unknown) =>
+      configuredKey === key ? value : fallback,
+    );
+  }
+
+  describe("access token", () => {
+    it("throws naming the config key when expiresIn is unparseable", async () => {
+      withConfig("auth.accessToken.expiresIn", "30dayz");
+
+      await expect(authService.generateAccessToken(buildUser())).rejects.toThrow(
+        /auth\.accessToken\.expiresIn/,
+      );
+
+      // nothing is signed and nothing is persisted with a broken lifetime
+      expect(jwtGenerate).not.toHaveBeenCalled();
+      expect(accessTokenIssue).not.toHaveBeenCalled();
+    });
+
+    it("throws for an unparseable value that reads like prose", async () => {
+      withConfig("auth.accessToken.expiresIn", "thirty days");
+
+      await expect(authService.generateAccessToken(buildUser())).rejects.toThrow(
+        /auth\.accessToken\.expiresIn/,
+      );
+    });
+
+    it("throws for a value that parses to zero (`0d`)", async () => {
+      // "0d" is truthy AND parses cleanly to 0 — it survives any guard that only
+      // rejects undefined/NaN, and would mint an already-expired token.
+      withConfig("auth.accessToken.expiresIn", "0d");
+
+      await expect(authService.generateAccessToken(buildUser())).rejects.toThrow(
+        /auth\.accessToken\.expiresIn/,
+      );
+      expect(jwtGenerate).not.toHaveBeenCalled();
+    });
+
+    it("throws for a negative duration", async () => {
+      withConfig("auth.accessToken.expiresIn", "-1h");
+
+      await expect(authService.generateAccessToken(buildUser())).rejects.toThrow(
+        /auth\.accessToken\.expiresIn/,
+      );
+    });
+
+    it("throws for a bare number (ms formats it instead of parsing it)", async () => {
+      withConfig("auth.accessToken.expiresIn", 2_592_000);
+
+      await expect(authService.generateAccessToken(buildUser())).rejects.toThrow(
+        /auth\.accessToken\.expiresIn/,
+      );
+    });
+
+    it("accepts a valid spaced duration", async () => {
+      withConfig("auth.accessToken.expiresIn", "30 days");
+
+      await authService.generateAccessToken(buildUser());
+
+      expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 2_592_000_000 });
+    });
+
+    it("accepts NO_EXPIRATION (100y) unchanged", async () => {
+      withConfig("auth.accessToken.expiresIn", NO_EXPIRATION);
+
+      await authService.generateAccessToken(buildUser());
+
+      expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), {
+        expiresIn: 3_155_760_000_000,
+      });
+    });
+
+    it("defaults to 1h when expiresIn is absent", async () => {
+      // auth-config declares accessToken.expiresIn as `string | undefined` with
+      // no default of its own, so this path is real.
+      configKey.mockImplementation((_key: string, fallback?: unknown) => fallback);
+
+      await authService.generateAccessToken(buildUser());
+
+      expect(jwtGenerate).toHaveBeenCalledWith(expect.any(Object), { expiresIn: 3_600_000 });
+    });
+
+    it("never hands a non-positive or non-finite expiresIn to the signer", async () => {
+      withConfig("auth.accessToken.expiresIn", "1h");
+
+      await authService.generateAccessToken(buildUser());
+
+      const { expiresIn } = jwtGenerate.mock.calls[0][1] as { expiresIn: unknown };
+
+      expect(typeof expiresIn).toBe("number");
+      expect(Number.isFinite(expiresIn as number)).toBe(true);
+      expect(expiresIn as number).toBeGreaterThan(0);
+    });
+  });
+
+  describe("refresh token", () => {
+    it("throws naming the config key when expiresIn is unparseable", async () => {
+      withConfig("auth.refreshToken.expiresIn", "30dayz");
+
+      await expect(authService.createRefreshToken(buildUser())).rejects.toThrow(
+        /auth\.refreshToken\.expiresIn/,
+      );
+
+      // validation happens before any side effect — no cap enforcement, no issue
+      expect(refreshTokenEnforceMax).not.toHaveBeenCalled();
+      expect(jwtGenerateRefreshToken).not.toHaveBeenCalled();
+      expect(refreshTokenIssue).not.toHaveBeenCalled();
+    });
+
+    it("throws for a value that parses to zero (`0d`)", async () => {
+      withConfig("auth.refreshToken.expiresIn", "0d");
+
+      await expect(authService.createRefreshToken(buildUser())).rejects.toThrow(
+        /auth\.refreshToken\.expiresIn/,
+      );
+      expect(refreshTokenIssue).not.toHaveBeenCalled();
+    });
+
+    it("keeps the documented 7d default working", async () => {
+      configKey.mockImplementation((_key: string, fallback?: unknown) => fallback);
+
+      await authService.createRefreshToken(buildUser());
+
+      expect(jwtGenerateRefreshToken).toHaveBeenCalledWith(expect.any(Object), {
+        expiresIn: 604_800_000,
+      });
+    });
+
+    it("accepts a valid configured duration and persists a real expiry", async () => {
+      withConfig("auth.refreshToken.expiresIn", "30 days");
+
+      await authService.createRefreshToken(buildUser());
+
+      expect(jwtGenerateRefreshToken).toHaveBeenCalledWith(expect.any(Object), {
+        expiresIn: 2_592_000_000,
+      });
+
+      const { expiresAt } = refreshTokenIssue.mock.calls[0][2] as { expiresAt: string };
+
+      expect(Number.isNaN(new Date(expiresAt).getTime())).toBe(false);
+    });
   });
 });
 
@@ -540,6 +704,49 @@ describe("authService.cleanupExpiredTokens", () => {
     expect(emit).toHaveBeenCalledWith("token.expired", rows[0]);
     expect(accessTokenPurgeExpired).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledWith("cleanup.completed", 2);
+  });
+});
+
+/**
+ * #27 remediation. These rows are invisible to `cleanupExpiredTokens`: its
+ * predicate is `expires_at < now`, which an `Invalid Date` never satisfies.
+ */
+describe("authService never-expiring token remediation", () => {
+  it("reports access and refresh rows from both models", async () => {
+    const accessRow = { id: "at-1" };
+    const refreshRow = buildRefreshTokenRow({ id: "rt-1" });
+    accessTokenFindNeverExpiring.mockResolvedValue([accessRow]);
+    refreshTokenFindNeverExpiring.mockResolvedValue([refreshRow]);
+
+    const found = await authService.findNeverExpiringTokens();
+
+    expect(found.accessTokens).toEqual([accessRow]);
+    expect(found.refreshTokens).toEqual([refreshRow]);
+  });
+
+  it("finding is read-only — it deletes nothing", async () => {
+    await authService.findNeverExpiringTokens();
+
+    expect(accessTokenPurgeNeverExpiring).not.toHaveBeenCalled();
+    expect(refreshTokenPurgeNeverExpiring).not.toHaveBeenCalled();
+  });
+
+  it("purges both models and returns the counts", async () => {
+    accessTokenPurgeNeverExpiring.mockResolvedValue([{ id: "at-1" }, { id: "at-2" }]);
+    refreshTokenPurgeNeverExpiring.mockResolvedValue([buildRefreshTokenRow({ id: "rt-1" })]);
+
+    const purged = await authService.purgeNeverExpiringTokens();
+
+    expect(purged).toEqual({ accessTokens: 2, refreshTokens: 1 });
+  });
+
+  it("emits token.expired per removed refresh token", async () => {
+    const row = buildRefreshTokenRow({ id: "rt-1" });
+    refreshTokenPurgeNeverExpiring.mockResolvedValue([row]);
+
+    await authService.purgeNeverExpiringTokens();
+
+    expect(emit).toHaveBeenCalledWith("token.expired", row);
   });
 });
 

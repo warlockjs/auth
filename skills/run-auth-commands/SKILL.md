@@ -1,17 +1,18 @@
 ---
 name: run-auth-commands
-description: 'Two bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env) and warlock auth.cleanup (removes expired refresh tokens). Register via registerJWTSecretGeneratorCommand() and registerAuthCleanupCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `cleanupExpiredTokens`, `command`; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
+description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
 ---
 
 # Run auth commands
 
-The package ships two CLI commands. Register them in `warlock.config.ts`; the framework picks them up.
+The package ships three CLI commands. Register them in `warlock.config.ts`; the framework picks them up.
 
 ## Register
 
 ```ts title="warlock.config.ts"
 import {
   registerAuthCleanupCommand,
+  registerAuthPurgeNeverExpiringCommand,
   registerJWTSecretGeneratorCommand,
 } from "@warlock.js/auth";
 import { defineConfig } from "@warlock.js/core";
@@ -21,6 +22,7 @@ export default defineConfig({
     commands: [
       registerJWTSecretGeneratorCommand(),
       registerAuthCleanupCommand(),
+      registerAuthPurgeNeverExpiringCommand(),
     ],
   },
 });
@@ -79,6 +81,23 @@ Out-of-process — works when you don't want the scheduler subsystem running in 
 Once a day is usually enough. The check is cheap (single indexed DELETE on `expires_at < now()`), and refresh tokens that have already expired don't grant access — cleanup is housekeeping, not security.
 
 If you have very-short-lived refresh tokens (1h expiry) and a million-user scale where the table grows fast, cleanup more often (hourly).
+
+## `warlock auth.purge-never-expiring` — one-off remediation
+
+```bash
+yarn warlock auth.purge-never-expiring --dry-run   # report only
+yarn warlock auth.purge-never-expiring             # report, then revoke
+```
+
+Register with `registerAuthPurgeNeverExpiringCommand()`.
+
+Finds every token row that **can never retire itself**, on two independent signals: an `expires_at` that is missing or unparseable, and a stored token carrying no `exp` claim. It reports `id` / `user_id` / `user_type` / `expires_at` per row — never the token string, which is a live credential until the row is deleted — and then deletes them. Affected users must log in again.
+
+**This is not a substitute for `auth.cleanup`, and `auth.cleanup` is not a substitute for it.** Cleanup selects `expires_at < now`; an `Invalid Date` compares `false` against *every* date, so such a row satisfies neither `< now` nor `> now` and no date predicate can ever reach it. The "no `exp` claim" signal is not in a column at all — it is inside the JWT.
+
+Run it once after upgrading to 4.12.0 **if any deployment ever ran an `expiresIn` that `ms` could not parse** (`"30dayz"`, `"0d"`, `""`, a bare number). Those configurations minted tokens that verify forever. It is safe to run when unaffected — it reports nothing and deletes nothing.
+
+Unlike `auth.cleanup`, do **not** schedule it: it is a full table scan (it must read rows to judge them, since neither signal is expressible as a `where`), and once the poisoned rows are gone, 4.12.0 cannot create more.
 
 ## Custom commands
 

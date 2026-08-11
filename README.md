@@ -1,6 +1,6 @@
 # Warlock Auth
 
-JWT authentication for [Warlock.js](https://github.com/warlockjs/core) applications — a base `Auth` model your user types extend, an `authMiddleware` route gate, an `authService` for login / logout / refresh (with refresh-token rotation + replay detection), persisted access + refresh tokens, multi-user-type support, lifecycle events, brute-force throttling, and two CLI commands.
+JWT authentication for [Warlock.js](https://github.com/warlockjs/core) applications — a base `Auth` model your user types extend, an `authMiddleware` route gate, an `authService` for login / logout / refresh (with refresh-token rotation + replay detection), persisted access + refresh tokens, multi-user-type support, lifecycle events, brute-force throttling, and three CLI commands.
 
 ## Installation
 
@@ -34,6 +34,10 @@ export default authConfigurations;
 ```
 
 The legacy `jwt: { secret, expiresIn, refresh: {…} }` block is still honored (with a deprecation warning), but prefer the `accessToken` / `refreshToken` blocks.
+
+`expiresIn` must be a duration string [`ms`](https://github.com/vercel/ms) parses to a positive value (`"1h"`, `"30 days"`, `NO_EXPIRATION`); anything else throws naming the key on the first token issue, rather than signing a token with no expiry.
+
+A token is only accepted while **both** its own `exp` claim and its stored `expires_at` are in the future — a JWT with no `exp` at all is rejected outright, since a verifier with no deadline to check succeeds forever. If any deployment ran a pre-4.12.0 version with an invalid `expiresIn`, tokens issued then may never expire and are still live: run `warlock auth.purge-never-expiring --dry-run` to find them. See the 4.12.0 entry in [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Documentation
 

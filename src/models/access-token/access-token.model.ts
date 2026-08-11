@@ -1,5 +1,6 @@
 import { Model } from "@warlock.js/cascade";
 import { v } from "@warlock.js/seal";
+import { isNeverExpiring, isUsableExpiry } from "../../utils/token-expiry";
 import type { Auth } from "../auth.model";
 
 /**
@@ -40,6 +41,39 @@ export class AccessToken extends Model {
   /** The user-type slug this token was issued for. */
   public get userType(): string {
     return this.get("user_type");
+  }
+
+  /**
+   * Whether the persisted expiry has passed.
+   *
+   * The middleware asks this on every request, which is what makes the row the
+   * authority it always looked like it was: before 4.12.0 the gate only checked
+   * that the row *existed*, so a row the database knew was dead still let its
+   * token through — the database was never asked.
+   *
+   * **Fails closed.** A missing or unparseable `expires_at` counts as expired.
+   * `expires_at` is `required` in the schema, so a row that cannot answer "when
+   * does this die" is malformed, and the safe reading of a malformed credential
+   * is that it is not one. This is deliberately stricter than a naive
+   * `now > expires_at`, which answers `false` for an `Invalid Date` and thereby
+   * grants exactly the poisoned rows an unlimited life.
+   */
+  public get isExpired(): boolean {
+    const expiresAt = this.get("expires_at");
+
+    if (!isUsableExpiry(expiresAt)) return true;
+
+    return new Date(expiresAt).getTime() <= Date.now();
+  }
+
+  /**
+   * Whether nothing about this row can ever retire it — an unusable
+   * `expires_at`, or a token carrying no `exp` claim. See
+   * {@link isNeverExpiring}; this is the predicate `purgeNeverExpiring` selects
+   * on.
+   */
+  public get neverExpires(): boolean {
+    return isNeverExpiring(this.get("token"), this.get("expires_at"));
   }
 
   /**
@@ -87,5 +121,37 @@ export class AccessToken extends Model {
     }
 
     return expiredTokens.length;
+  }
+
+  /**
+   * Every row that can never retire itself — see {@link neverExpires}.
+   *
+   * **A full scan, filtered in memory, on purpose.** The defining case is a row
+   * whose `expires_at` is an `Invalid Date`, which no date predicate can select
+   * (`< now` and `> now` are both `false` for it), and the definitive case is a
+   * token with no `exp` claim, which lives inside the token string rather than
+   * in a column. Neither is expressible as a `where`, so the rows have to be
+   * read to be judged. This runs from a one-off remediation command, not a
+   * request path.
+   */
+  public static async findNeverExpiring(): Promise<AccessToken[]> {
+    const tokens = await this.query().get();
+
+    return tokens.filter((token: AccessToken) => token.neverExpires);
+  }
+
+  /**
+   * Hard-delete every never-expiring row, returning the rows removed so the
+   * caller can report what it revoked. Deletion *is* revocation for access
+   * tokens — the middleware rejects a token with no row.
+   */
+  public static async purgeNeverExpiring(): Promise<AccessToken[]> {
+    const tokens = await this.findNeverExpiring();
+
+    for (const token of tokens) {
+      await token.destroy();
+    }
+
+    return tokens;
   }
 }

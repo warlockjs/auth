@@ -70,6 +70,21 @@ export default {
 };
 ```
 
+### Token lifetimes are validated — a bad one throws
+
+`expiresIn` (both blocks) must be a duration string the [`ms`](https://github.com/vercel/ms) package parses to a **positive** number: `"1h"`, `"30m"`, `"7d"`, `"30 days"`, or `NO_EXPIRATION` (`"100y"`). Anything else throws on the first token issue, naming the key:
+
+```
+auth.accessToken.expiresIn: "30dayz" is not a valid ms duration — use a positive duration string such as "1h", "7d", or NO_EXPIRATION.
+```
+
+That is deliberate. `ms` answers `undefined` for a string it can't parse (`"30dayz"`, `"thirty days"`) and `0` for `"0d"`, and a signer given either emits a JWT with **no `exp` claim** — a credential that never expires. A typo must not be able to produce that quietly, so it fails loudly instead of falling back to a default nobody asked for. Defaults still apply when the key is **absent**: `1h` for access, `7d` for refresh.
+
+Two values that look right and are not:
+
+- `expiresIn: 2592000` — a bare number. `ms` *formats* numbers instead of parsing them, so this is rejected; write `"30d"`.
+- `expiresIn: env("JWT_TTL")` where the variable is unset — resolves to `""` and is rejected. Give the env read a default: `env("JWT_TTL") || "1h"`.
+
 ## Pick a skill
 
 | If the task is about… | Load |

@@ -1,6 +1,7 @@
 import { Model } from "@warlock.js/cascade";
 import { v } from "@warlock.js/seal";
 import type { DeviceInfo } from "../../contracts/types";
+import { isNeverExpiring, isUsableExpiry } from "../../utils/token-expiry";
 import type { Auth } from "../auth.model";
 
 /**
@@ -55,13 +56,30 @@ export class RefreshToken extends Model {
     return this.get("family_id");
   }
 
-  /** Whether the token's `expires_at` is in the past. */
+  /**
+   * Whether the token's `expires_at` is in the past.
+   *
+   * **Fails closed as of 4.12.0**: a missing or unparseable `expires_at` now
+   * counts as expired. It previously answered `false` for both — "no expiry
+   * recorded ⇒ never expires" — which handed an unlimited life to precisely the
+   * malformed rows, including the `Invalid Date` a pre-4.12.0 unparseable
+   * `expiresIn` could write. `expires_at` is `required` in the schema, so a row
+   * that cannot say when it dies is malformed, not immortal.
+   */
   public get isExpired(): boolean {
     const expiresAt = this.get("expires_at");
 
-    if (!expiresAt) return false;
+    if (!isUsableExpiry(expiresAt)) return true;
 
-    return new Date() > new Date(expiresAt);
+    return new Date().getTime() > new Date(expiresAt).getTime();
+  }
+
+  /**
+   * Whether nothing can ever retire this row — an unusable `expires_at`, or a
+   * token carrying no `exp` claim. See {@link isNeverExpiring}.
+   */
+  public get neverExpires(): boolean {
+    return isNeverExpiring(this.get("token"), this.get("expires_at"));
   }
 
   /** Whether the token has been revoked. */
@@ -226,5 +244,36 @@ export class RefreshToken extends Model {
     }
 
     return expiredTokens;
+  }
+
+  /**
+   * Every row that can never retire itself — see {@link neverExpires}. A full
+   * scan filtered in memory, for the reason given on
+   * {@link AccessToken.findNeverExpiring}: neither an `Invalid Date` nor a
+   * missing `exp` claim is expressible as a `where`.
+   */
+  public static async findNeverExpiring(): Promise<RefreshToken[]> {
+    const tokens = await this.query().get();
+
+    return tokens.filter((token: RefreshToken) => token.neverExpires);
+  }
+
+  /**
+   * Hard-delete every never-expiring row, returning the rows removed.
+   *
+   * Deleted rather than `revoked_at`-stamped: a revoked row is still a row this
+   * table has to carry, and one of the two shapes being removed is a row whose
+   * date column cannot be compared at all — leaving it in place keeps a
+   * permanently unpurgeable record. Rotation replay-detection is unaffected;
+   * these rows can no longer be presented successfully either way.
+   */
+  public static async purgeNeverExpiring(): Promise<RefreshToken[]> {
+    const tokens = await this.findNeverExpiring();
+
+    for (const token of tokens) {
+      await token.destroy();
+    }
+
+    return tokens;
   }
 }

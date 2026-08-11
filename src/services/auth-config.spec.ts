@@ -11,6 +11,7 @@ vi.mock("@warlock.js/logger", () => ({
   log: { warn: (...args: unknown[]) => logWarn(...args) },
 }));
 
+import { NO_EXPIRATION } from "../contracts/types";
 import { authConfig } from "./auth-config";
 
 beforeEach(() => {
@@ -64,5 +65,60 @@ describe("authConfig resolver", () => {
     authConfig.refreshToken.rotation();
 
     expect(logWarn).toHaveBeenCalledOnce();
+  });
+});
+
+describe("authConfig expiresInMs", () => {
+  function withConfig(key: string, value: unknown) {
+    configKey.mockImplementation((configuredKey: string) =>
+      configuredKey === key ? value : undefined,
+    );
+  }
+
+  it("parses a valid access-token duration to milliseconds", () => {
+    withConfig("auth.accessToken.expiresIn", "30 days");
+
+    expect(authConfig.accessToken.expiresInMs()).toBe(2_592_000_000);
+  });
+
+  it("defaults the access token to 1h when unset", () => {
+    expect(authConfig.accessToken.expiresInMs()).toBe(3_600_000);
+  });
+
+  it("defaults the refresh token to 7d when unset", () => {
+    expect(authConfig.refreshToken.expiresInMs()).toBe(604_800_000);
+  });
+
+  it("resolves through the deprecated jwt.* keys too", () => {
+    withConfig("auth.jwt.expiresIn", "2h");
+
+    expect(authConfig.accessToken.expiresInMs()).toBe(7_200_000);
+  });
+
+  it.each(["30dayz", "thirty days", "0d", "-1h", "", 2_592_000, true])(
+    "throws naming auth.accessToken.expiresIn for %o",
+    value => {
+      withConfig("auth.accessToken.expiresIn", value);
+
+      expect(() => authConfig.accessToken.expiresInMs()).toThrow(/auth\.accessToken\.expiresIn/);
+    },
+  );
+
+  it.each(["30dayz", "0d", ""])("throws naming auth.refreshToken.expiresIn for %o", value => {
+    withConfig("auth.refreshToken.expiresIn", value);
+
+    expect(() => authConfig.refreshToken.expiresInMs()).toThrow(/auth\.refreshToken\.expiresIn/);
+  });
+
+  it("quotes the offending value in the error message", () => {
+    withConfig("auth.accessToken.expiresIn", "30dayz");
+
+    expect(() => authConfig.accessToken.expiresInMs()).toThrow(/"30dayz"/);
+  });
+
+  it("accepts NO_EXPIRATION", () => {
+    withConfig("auth.accessToken.expiresIn", NO_EXPIRATION);
+
+    expect(authConfig.accessToken.expiresInMs()).toBe(3_155_760_000_000);
   });
 });

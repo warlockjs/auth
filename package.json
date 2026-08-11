@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/auth",
-  "version": "4.11.0",
+  "version": "4.12.0",
   "type": "module",
   "description": "Authentication system for Warlock.js applications",
   "main": "./esm/index.js",
@@ -20,7 +20,8 @@
     "@testcontainers/postgresql": "^10.28.0",
     "@types/ms": "^2.1.0",
     "mongodb": "^7.2.0",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "vitest": "4.1.10"
   },
   "peerDependencies": {
     "@warlock.js/fs": "*",

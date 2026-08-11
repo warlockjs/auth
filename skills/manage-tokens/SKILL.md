@@ -146,12 +146,20 @@ For low-level JWT signing/verification (outside the authService flow):
 ```ts
 import { jwt } from "@warlock.js/auth";
 
-const token = await jwt.generate(payload, { expiresIn: "1h" }); // string or ms; a bare number is milliseconds
+const token = await jwt.generate(payload, { expiresIn: 3_600_000 }); // milliseconds
 const decoded = await jwt.verify(token);
 
 const refreshToken = await jwt.generateRefreshToken(payload, { expiresIn });
 const decodedRefresh = await jwt.verifyRefreshToken(refreshToken);
 ```
+
+⚠️ **`jwt.generate` / `jwt.generateRefreshToken` are the low-level escape hatch — `expiresIn` goes straight to `fast-jwt`.** It takes a number of milliseconds or an `ms`-style string, and rejects an unparseable string. What it does **not** reject is `undefined` or `0`: both skip the check and emit a token with **no `exp` claim**. Pass a positive value, and never pass the result of parsing a config string without checking it first.
+
+**`jwt.verify` / `jwt.verifyRefreshToken` require an `exp` claim** (since 4.12.0) and reject a token without one. There is no deadline to check on such a token, so verification would otherwise succeed indefinitely. `requiredClaims` is additive — `jwt.verify(token, { requiredClaims: ["iat"] })` requires `iat` **and** `exp`; you cannot opt out of `exp`. If you want a token that effectively never expires, use `expiresIn: NO_EXPIRATION` (`"100y"`), which stamps a real `exp` about a century out.
+
+If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — they are still in your token tables and no date-based cleanup can reach them.
+
+`authService.generateAccessToken` / `createRefreshToken` read `config.auth.accessToken.expiresIn` / `config.auth.refreshToken.expiresIn`, validate them, and throw naming the key if the value is not a positive `ms` duration — before anything is signed, persisted, or capped.
 
 The package signs access and refresh tokens with independent secrets — `config.auth.accessToken.secret` and `config.auth.refreshToken.secret`. Setting a distinct `refresh.secret` is recommended: it prevents an access-token compromise from forging refresh tokens (and vice versa). The refresh secret is **optional** — when `config.auth.refreshToken.secret` is unset, refresh tokens fall back to the main `config.auth.accessToken.secret`, so refresh works out of the box without a second secret.
 
