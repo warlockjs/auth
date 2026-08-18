@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.15.0
+
+### Dependencies
+
+- Bumped `@mongez/events` to `^2.2.7` (no breaking changes) and `@mongez/reinforcements` to `^4.0.1`. The reinforcements major makes `Random.string/nanoid/id/token/uuid` CSPRNG-backed (WebCrypto) and removes `Random.seed()` support. This package calls `Random.string(32)` (device `familyId` fallback) and `Random.token(32)` (JWT secret generation) — both are exactly the security-sensitive uses the CSPRNG backing is meant to strengthen, and neither relied on seeding; audited for `Random.seed(` with no hits, so no code changes were needed.
+
 ## 4.12.0
 
 ### Security
