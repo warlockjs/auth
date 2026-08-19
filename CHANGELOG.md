@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 4.16.0 - 2026-08-18
 
+### Security
+
+- **Login credential lookups are no longer vulnerable to NoSQL operator injection.** `authService.attemptLogin` forwards the request's credential fields (e.g. `email`, `phoneNumber`) into `Model.first(...)` to find the user, so a caller that passed request JSON straight through could smuggle a MongoDB operator object — `{ email: { $ne: null } }`, `{ email: { $regex: "^a" } }` — into the user-lookup filter, breaking its intended equality semantics and enabling account enumeration / targeted-lookup attacks (the password is still verified separately with bcrypt, so this was never a full bypass on its own). The fix lands in `@warlock.js/cascade` 4.16.0, whose query builder now rejects `$`-prefixed keys in equality position (`UnsafeFilterError`); because `attemptLogin`'s lookup routes through cascade, upgrading the family to 4.16.0 closes this with no change to your auth code. If you build user lookups by hand, keep passing scalars — or use the explicit operator API — rather than forwarding raw request objects.
+
 ### Dependencies
 
 - Bumped `@mongez/events` to `^2.2.7` (no breaking changes) and `@mongez/reinforcements` to `^4.0.1`. The reinforcements major makes `Random.string/nanoid/id/token/uuid` CSPRNG-backed (WebCrypto) and removes `Random.seed()` support. This package calls `Random.string(32)` (device `familyId` fallback) and `Random.token(32)` (JWT secret generation) — both are exactly the security-sensitive uses the CSPRNG backing is meant to strengthen, and neither relied on seeding; audited for `Random.seed(` with no hits, so no code changes were needed.
