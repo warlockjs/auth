@@ -1,4 +1,5 @@
 import { createSigner, createVerifier, type SignerOptions, type VerifierOptions } from "fast-jwt";
+import { AuthErrorCodes } from "../utils/auth-error-codes";
 import { authConfig } from "./auth-config";
 
 const getSecretKey = () => authConfig.accessToken.secret();
@@ -22,6 +23,61 @@ const ACCESS_TOKEN_TYPE: TokenType = "access";
 const REFRESH_TOKEN_TYPE: TokenType = "refresh";
 
 /**
+ * Error codes that mean "the credential itself is bad", as opposed to "this
+ * server could not check it". This is an ALLOWLIST and must stay one. The codes
+ * deliberately left out — `FAST_JWT_INVALID_KEY`, `FAST_JWT_MISSING_KEY`,
+ * `FAST_JWT_KEY_FETCHING_ERROR`, `FAST_JWT_INVALID_OPTION`,
+ * `FAST_JWT_VERIFY_ERROR`, and `FAST_JWT_SIGN_ERROR` — describe a broken
+ * server, not a broken token, and so does every unknown future code.
+ */
+const INVALID_CREDENTIAL_ERROR_CODES = new Set<string>([
+  "FAST_JWT_MALFORMED",
+  "FAST_JWT_INVALID_SIGNATURE",
+  "FAST_JWT_MISSING_SIGNATURE",
+  "FAST_JWT_INVALID_ALGORITHM",
+  "FAST_JWT_EXPIRED",
+  "FAST_JWT_INACTIVE",
+  // How a token carrying no `exp` is rejected — `jwt.verify` forces `exp` into
+  // `requiredClaims`, so this code IS the missing-deadline guard firing.
+  "FAST_JWT_MISSING_REQUIRED_CLAIM",
+  "FAST_JWT_INVALID_CLAIM_VALUE",
+  "FAST_JWT_INVALID_CLAIM_TYPE",
+  "FAST_JWT_INVALID_CRIT_HEADER",
+  "FAST_JWT_INVALID_TYPE",
+  "FAST_JWT_INVALID_PAYLOAD",
+  AuthErrorCodes.InvalidTokenType,
+]);
+
+/**
+ * Only coded credential failures become authentication misses. Plain errors,
+ * including missing-secret configuration failures, propagate to the central
+ * server-error path instead of reading as "everyone's token is bad".
+ */
+export function isInvalidCredentialError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+
+  return typeof code === "string" && INVALID_CREDENTIAL_ERROR_CODES.has(code);
+}
+
+/**
+ * A `tokenType` claim that does not match what the caller expects. This IS a
+ * bad credential (an access-token cookie can only hold a refresh token
+ * through an app bug) — but unlike `fast-jwt`'s own rejections it was
+ * previously a plain `Error`, unclassifiable by a caller that wants to answer
+ * 401 without string-matching a message that could reword on any release.
+ * `code` mirrors how `fast-jwt`'s `TokenError` carries its own code, so a
+ * caller can classify both through `isInvalidCredentialError` above.
+ */
+export class TokenTypeError extends Error {
+  readonly code = AuthErrorCodes.InvalidTokenType;
+
+  constructor(expected: TokenType, actual: string) {
+    super(`Invalid token type: expected "${expected}", received "${actual}".`);
+    this.name = "TokenTypeError";
+  }
+}
+
+/**
  * Reject the token when its `tokenType` claim is present and does not match the
  * expected class. Absent claim ⇒ legacy token, accepted (backward compatible).
  */
@@ -29,7 +85,7 @@ function assertTokenType(decoded: unknown, expected: TokenType): void {
   const actual = (decoded as { tokenType?: unknown } | null | undefined)?.tokenType;
 
   if (typeof actual === "string" && actual !== expected) {
-    throw new Error(`Invalid token type: expected "${expected}", received "${actual}".`);
+    throw new TokenTypeError(expected, actual);
   }
 }
 

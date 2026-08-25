@@ -53,13 +53,19 @@ const jwtGenerate = vi.fn();
 const jwtGenerateRefreshToken = vi.fn();
 const jwtVerifyRefreshToken = vi.fn();
 
-vi.mock("./jwt", () => ({
-  jwt: {
-    generate: (...args: unknown[]) => jwtGenerate(...args),
-    generateRefreshToken: (...args: unknown[]) => jwtGenerateRefreshToken(...args),
-    verifyRefreshToken: (...args: unknown[]) => jwtVerifyRefreshToken(...args),
-  },
-}));
+vi.mock("./jwt", async importOriginal => {
+  const actual = await importOriginal<typeof import("./jwt")>();
+
+  return {
+    ...actual,
+    jwt: {
+      ...actual.jwt,
+      generate: (...args: unknown[]) => jwtGenerate(...args),
+      generateRefreshToken: (...args: unknown[]) => jwtGenerateRefreshToken(...args),
+      verifyRefreshToken: (...args: unknown[]) => jwtVerifyRefreshToken(...args),
+    },
+  };
+});
 
 // ── events ──────────────────────────────────────────────────────────────────
 const emit = vi.fn();
@@ -502,11 +508,13 @@ describe("authService.refreshTokens", () => {
     expect(oldRow.revokeIfActive).not.toHaveBeenCalled();
   });
 
-  it("returns null when the user type maps to no model", async () => {
+  it("throws when the user type maps to no model", async () => {
     jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "ghost", familyId: "fam" });
     refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam" }, true));
 
-    expect(await authService.refreshTokens("valid")).toBeNull();
+    await expect(authService.refreshTokens("valid")).rejects.toThrow(
+      "User type ghost is unknown type.",
+    );
   });
 
   it("keeps the same family_id on the rotated pair", async () => {

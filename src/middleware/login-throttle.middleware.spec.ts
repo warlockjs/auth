@@ -24,6 +24,7 @@ vi.mock("@warlock.js/logger", () => ({
 
 import { loginThrottleMiddleware } from "./login-throttle.middleware";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
+import { makeCtx } from "./test-support/make-ctx";
 
 type SentCallback = (response: FakeResponse) => void | Promise<void>;
 
@@ -81,7 +82,7 @@ describe("loginThrottleMiddleware", () => {
     const request = buildRequest();
     const response = buildResponse(true);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.tooManyRequests).toHaveBeenCalledOnce();
     expect(response.tooManyRequests).toHaveBeenCalledWith(
@@ -98,7 +99,7 @@ describe("loginThrottleMiddleware", () => {
     const request = buildRequest();
     const response = buildResponse(false);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
     expect(cacheUpdate).toHaveBeenCalledWith(
@@ -123,7 +124,7 @@ describe("loginThrottleMiddleware", () => {
     const request = buildRequest();
     const response = buildResponse(false);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
     expect(cacheUpdate).toHaveBeenCalledWith(
@@ -145,7 +146,7 @@ describe("loginThrottleMiddleware", () => {
     const request = buildRequest();
     const response = buildResponse(true);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
     expect(cacheRemove).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com");
@@ -161,7 +162,7 @@ describe("loginThrottleMiddleware", () => {
     };
     const response = buildResponse(true);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(cacheGet).not.toHaveBeenCalled();
     expect(response.tooManyRequests).not.toHaveBeenCalled();
@@ -175,7 +176,7 @@ describe("loginThrottleMiddleware", () => {
     const request = buildRequest();
     const response = buildResponse(false);
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
     // both the per-account AND the per-source counter must be bumped
@@ -199,7 +200,7 @@ describe("loginThrottleMiddleware", () => {
     const response = buildResponse(true);
 
     // must NOT throw and must NOT 429
-    await expect(middleware(request as never, response as never)).resolves.toBeUndefined();
+    await expect(middleware(makeCtx({ request, response }))).resolves.toBeUndefined();
     expect(response.tooManyRequests).not.toHaveBeenCalled();
   });
 });

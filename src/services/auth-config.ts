@@ -2,9 +2,12 @@ import { config } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
 import { type Algorithm } from "fast-jwt";
 import ms from "ms";
-import type { LogoutWithoutTokenBehavior } from "../contracts/types";
+import type { CanAuthenticate, LogoutWithoutTokenBehavior } from "../contracts/types";
+import type { Auth } from "../models/auth.model";
 
 const warnedLegacyKeys = new Set<string>();
+
+const permitAuthentication: CanAuthenticate = (): boolean => true;
 
 /**
  * `ms` accepts anything at runtime and answers `undefined` for a string it
@@ -92,6 +95,14 @@ function resolve<T>(newKey: string, legacyKey: string, fallback?: T): T {
  * config and the legacy `auth.jwt.*` shape both resolve the same way.
  */
 export const authConfig = {
+  canAuthenticate: async (user: Auth): Promise<boolean> => {
+    const canAuthenticate = config.key<CanAuthenticate>(
+      "auth.canAuthenticate",
+      permitAuthentication,
+    );
+
+    return canAuthenticate(user);
+  },
   accessToken: {
     /** Signing secret (legacy: `auth.jwt.secret`). Throws if neither is set. */
     secret: (): string => {

@@ -1,13 +1,19 @@
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
-import { config, hashPassword, verifyPassword } from "@warlock.js/core";
-import type { AccessTokenOutput, DeviceInfo, LoginResult, TokenPair } from "../contracts/types";
+import { config, ForbiddenError, hashPassword, verifyPassword } from "@warlock.js/core";
+import type {
+  AccessTokenOutput,
+  AuthCredentials,
+  DeviceInfo,
+  LoginResult,
+  TokenPair,
+} from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { RefreshToken } from "../models/refresh-token";
 import { authConfig } from "./auth-config";
 import { authEvents } from "./auth-events";
-import { jwt } from "./jwt";
+import { isInvalidCredentialError, jwt } from "./jwt";
 
 class AuthService {
   /**
@@ -30,7 +36,7 @@ class AuthService {
   /**
    * Build the default access-token JWT payload from a user.
    */
-  public buildAccessTokenPayload(user: Auth) {
+  public buildAccessTokenPayload(user: Auth): Record<string, unknown> {
     return {
       id: user.id,
       userType: user.userType,
@@ -38,16 +44,23 @@ class AuthService {
     };
   }
 
-  /**
-   * Sign + persist an access token for the user and return the token with its
-   * expiry. The expiry is computed locally from `expiresIn` rather than by
-   * re-verifying the token we just signed.
-   */
-  public async generateAccessToken(user: Auth, payload?: any): Promise<AccessTokenOutput> {
+  /** One policy seam keeps account-state checks identical across all auth paths. */
+  public async canAuthenticate(user: Auth): Promise<boolean> {
+    return authConfig.canAuthenticate(user);
+  }
+
+  private async assertCanAuthenticate(user: Auth): Promise<void> {
+    if (!(await this.canAuthenticate(user))) {
+      throw new ForbiddenError("This user cannot authenticate.");
+    }
+  }
+
+  private async issueAccessToken(
+    user: Auth,
+    payload?: Record<string, unknown>,
+  ): Promise<AccessTokenOutput> {
     const data = payload || this.buildAccessTokenPayload(user);
-    // Validated before anything is signed or persisted: an unusable lifetime
-    // throws naming the config key rather than minting a token whose expiry
-    // nobody chose (defaults to 1h when unset).
+    // Validate before signing so an unusable lifetime cannot mint an immortal token.
     const expiresIn = authConfig.accessToken.expiresInMs();
 
     const token = await jwt.generate(data, { expiresIn });
@@ -59,10 +72,20 @@ class AuthService {
   }
 
   /**
-   * Sign + persist a refresh token for the user (enforcing the per-user cap
-   * first). Resolves to `undefined` when refresh tokens are disabled in config.
+   * Sign + persist an access token for the user and return the token with its
+   * expiry. The expiry is computed locally from `expiresIn` rather than by
+   * re-verifying the token we just signed.
    */
-  public async createRefreshToken(
+  public async generateAccessToken(
+    user: Auth,
+    payload?: Record<string, unknown>,
+  ): Promise<AccessTokenOutput> {
+    await this.assertCanAuthenticate(user);
+
+    return this.issueAccessToken(user, payload);
+  }
+
+  private async issueRefreshToken(
     user: Auth,
     deviceInfo?: DeviceInfo,
   ): Promise<RefreshToken | undefined> {
@@ -91,11 +114,23 @@ class AuthService {
   }
 
   /**
-   * Issue both an access and a refresh token, emitting the creation events.
+   * Sign + persist a refresh token for the user (enforcing the per-user cap
+   * first). Resolves to `undefined` when refresh tokens are disabled in config.
    */
-  public async createTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
-    const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
-    const refreshToken = await this.createRefreshToken(user, deviceInfo);
+  public async createRefreshToken(
+    user: Auth,
+    deviceInfo?: DeviceInfo,
+  ): Promise<RefreshToken | undefined> {
+    if (!authConfig.refreshToken.enabled()) return;
+
+    await this.assertCanAuthenticate(user);
+
+    return this.issueRefreshToken(user, deviceInfo);
+  }
+
+  private async issueTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
+    const accessToken = await this.issueAccessToken(user, deviceInfo?.payload);
+    const refreshToken = await this.issueRefreshToken(user, deviceInfo);
 
     const tokenPair: TokenPair = {
       accessToken,
@@ -117,6 +152,15 @@ class AuthService {
   }
 
   /**
+   * Issue both an access and a refresh token, emitting the creation events.
+   */
+  public async createTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
+    await this.assertCanAuthenticate(user);
+
+    return this.issueTokenPair(user, deviceInfo);
+  }
+
+  /**
    * Exchange a refresh token for a new token pair, with rotation + replay
    * detection. A concurrent reuse of the same token loses the atomic revoke and
    * is treated as a breach — the whole family is revoked and the request fails.
@@ -125,60 +169,74 @@ class AuthService {
     refreshTokenString: string,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair | null> {
+    let decoded:
+      | {
+          userId: number;
+          userType: string;
+          familyId: string;
+        }
+      | null;
+
     try {
-      const decoded = await jwt.verifyRefreshToken<{
+      decoded = await jwt.verifyRefreshToken<{
         userId: number;
         userType: string;
         familyId: string;
-      }>(refreshTokenString);
+    }>(refreshTokenString);
+    } catch (error) {
+      if (isInvalidCredentialError(error)) return null;
 
-      if (!decoded) return null;
+      throw error;
+    }
 
-      const refreshToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+    if (!decoded) return null;
 
-      if (!refreshToken?.isValid) {
-        // Already-invalid token presented → likely a replayed (rotated) token.
-        if (refreshToken) {
-          await this.revokeTokenFamily(refreshToken.familyId);
-        }
+    const refreshToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+
+    if (!refreshToken?.isValid) {
+      // An already-invalid token may be a replay of a rotated credential.
+      if (refreshToken) {
+        await this.revokeTokenFamily(refreshToken.familyId);
+      }
+
+      return null;
+    }
+
+    const UserModel = config.key(`auth.userType.${decoded.userType}`);
+
+    if (!UserModel) {
+      throw new Error(`User type ${decoded.userType} is unknown type.`);
+    }
+
+    const user = (await UserModel.find(decoded.userId)) as Auth | null;
+
+    if (!user) return null;
+
+    if (!(await this.canAuthenticate(user))) return null;
+
+    const rotationEnabled = authConfig.refreshToken.rotation();
+
+    if (rotationEnabled) {
+      const won = await refreshToken.revokeIfActive();
+
+      if (!won) {
+        // A concurrent request already rotated this token.
+        await this.revokeTokenFamily(refreshToken.familyId);
 
         return null;
       }
-
-      const UserModel = config.key(`auth.userType.${decoded.userType}`);
-
-      if (!UserModel) return null;
-
-      const user = (await UserModel.find(decoded.userId)) as Auth | null;
-
-      if (!user) return null;
-
-      const rotationEnabled = authConfig.refreshToken.rotation();
-
-      if (rotationEnabled) {
-        const won = await refreshToken.revokeIfActive();
-
-        if (!won) {
-          // A concurrent request already rotated this token (reuse / replay).
-          await this.revokeTokenFamily(refreshToken.familyId);
-
-          return null;
-        }
-      } else {
-        await refreshToken.markAsUsed();
-      }
-
-      const newTokenPair = await this.createTokenPair(user, {
-        ...deviceInfo,
-        familyId: refreshToken.familyId,
-      });
-
-      authEvents.emit("token.refreshed", user, newTokenPair, refreshToken);
-
-      return newTokenPair;
-    } catch {
-      return null;
+    } else {
+      await refreshToken.markAsUsed();
     }
+
+    const newTokenPair = await this.issueTokenPair(user, {
+      ...deviceInfo,
+      familyId: refreshToken.familyId,
+    });
+
+    authEvents.emit("token.refreshed", user, newTokenPair, refreshToken);
+
+    return newTokenPair;
   }
 
   /**
@@ -199,7 +257,10 @@ class AuthService {
    * Resolve a user by credentials, verifying the password. Returns `null` on a
    * missing user or a wrong password, emitting `login.failed` either way.
    */
-  public async attemptLogin<T extends Auth>(Model: ChildModel<T>, data: any): Promise<T | null> {
+  public async attemptLogin<T extends Auth>(
+    Model: ChildModel<T>,
+    data: AuthCredentials,
+  ): Promise<T | null> {
     const { password, ...otherData } = data;
 
     authEvents.emit("login.attempt", otherData);
@@ -218,6 +279,12 @@ class AuthService {
       return null;
     }
 
+    if (!(await this.canAuthenticate(user))) {
+      authEvents.emit("login.failed", otherData, "Authentication not allowed");
+
+      return null;
+    }
+
     return user;
   }
 
@@ -227,7 +294,7 @@ class AuthService {
    */
   public async login<T extends Auth>(
     Model: ChildModel<T>,
-    credentials: any,
+    credentials: AuthCredentials,
     deviceInfo?: DeviceInfo,
   ): Promise<LoginResult<T> | null> {
     const user = await this.attemptLogin(Model, credentials);
@@ -237,16 +304,16 @@ class AuthService {
     }
 
     if (!authConfig.refreshToken.enabled()) {
-      const accessToken = await this.generateAccessToken(user, deviceInfo?.payload);
+      const accessToken = await this.issueAccessToken(user, deviceInfo?.payload);
 
       return { user, tokens: { accessToken } };
     }
 
-    const tokens = await this.createTokenPair(user, deviceInfo);
+    const tokens = await this.issueTokenPair(user, deviceInfo);
 
     authEvents.emit("login.success", user, tokens, deviceInfo);
 
-    return { user, tokens } as LoginResult<T>;
+    return { user, tokens };
   }
 
   /**

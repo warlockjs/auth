@@ -166,7 +166,7 @@ export function loginThrottleMiddleware(options: LoginThrottleOptions = {}): Mid
   const tracked = options.by ?? ["email", "ip"];
   const credentialField = options.identifierKey ?? "email";
 
-  return async (request: Request, response: Response) => {
+  return async ({ request, response }) => {
     const identifiers = options.identify
       ? options.identify(request)
       : buildDefaultIdentifiers(request, tracked, credentialField);

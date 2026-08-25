@@ -13,7 +13,8 @@ vi.mock("@warlock.js/logger", () => ({
   log: { warn: vi.fn() },
 }));
 
-import { jwt } from "./jwt";
+import { jwt, TokenTypeError } from "./jwt";
+import { AuthErrorCodes } from "../utils/auth-error-codes";
 
 const ACCESS_SECRET = "access-secret-key-for-tests-0123456789";
 const REFRESH_SECRET = "refresh-secret-key-for-tests-0123456789";
@@ -258,6 +259,29 @@ describe("jwt", () => {
       const decoded = await jwt.verify<{ id: number }>(legacyToken);
 
       expect(decoded.id).toBe(7);
+    });
+
+    // D6: a `tokenType` mismatch is a genuine credential error (a refresh
+    // token presented where an access token is required), but was previously a
+    // plain `Error` — unclassifiable by a caller without matching the message.
+    // It now carries `AuthErrorCodes.InvalidTokenType`, the same shape
+    // `fast-jwt`'s own `TokenError.code` gives a caller.
+    it("rejects a tokenType mismatch with a classifiable code, not just a message", async () => {
+      // Same secret on both sides (refresh secret unset ⇒ falls back to the
+      // access secret) isolates the rejection to the tokenType claim, not the
+      // signature.
+      stubConfig({ "auth.jwt.refresh.secret": undefined });
+
+      const refreshToken = await jwt.generateRefreshToken({ userId: 7 }, { expiresIn: ONE_HOUR });
+
+      expect.assertions(2);
+
+      try {
+        await jwt.verify(refreshToken);
+      } catch (error) {
+        expect(error).toBeInstanceOf(TokenTypeError);
+        expect((error as TokenTypeError).code).toBe(AuthErrorCodes.InvalidTokenType);
+      }
     });
   });
 });

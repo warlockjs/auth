@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.0.0 - 2026-08-25
+
+### Changed
+
+- Authentication can now use an explicit header or named-cookie credential source and a configurable `canAuthenticate` policy; invalid credentials are distinguished from server and configuration failures instead of turning every verification error into a 401.
+
 ## 4.16.0 - 2026-08-18
 
 ### Security

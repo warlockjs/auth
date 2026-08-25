@@ -32,6 +32,17 @@ export const NO_EXPIRATION = "100y";
  */
 export type LogoutWithoutTokenBehavior = "revoke-all" | "error";
 
+/** The single request credential source an auth middleware instance accepts. */
+export type TokenFrom = "header" | `cookie:${string}`;
+
+/** Application policy that decides whether a resolved user may authenticate. */
+export type CanAuthenticate = (user: Auth) => boolean | Promise<boolean>;
+
+/** Password credentials plus the application-defined identity fields. */
+export type AuthCredentials = Record<string, unknown> & {
+  password: string;
+};
+
 /**
  * Access-token configuration.
  *
@@ -139,6 +150,11 @@ export type AuthConfigurations = {
     [userType: string]: ChildModel<Auth>;
   };
   /**
+   * Decide whether a resolved user may authenticate or receive new tokens.
+   * @default () => true
+   */
+  canAuthenticate?: CanAuthenticate;
+  /**
    * Access-token configuration (secret, expiry, algorithm, model override).
    */
   accessToken?: AccessTokenConfig;
@@ -201,7 +217,7 @@ export type DeviceInfo = {
   /**
    * Access token payload
    */
-  payload?: Record<string, any>;
+  payload?: Record<string, unknown>;
 };
 
 export type LoginResult<UserType extends Auth> = {

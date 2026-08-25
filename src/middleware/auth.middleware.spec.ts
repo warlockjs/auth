@@ -13,9 +13,17 @@ vi.mock("@warlock.js/logger", () => ({
   log: { error: vi.fn() },
 }));
 
-vi.mock("../services/jwt", () => ({
-  jwt: { verify: (...args: unknown[]) => jwtVerify(...args) },
-}));
+vi.mock("../services/jwt", async importOriginal => {
+  const actual = await importOriginal<typeof import("../services/jwt")>();
+
+  return {
+    ...actual,
+    jwt: {
+      ...actual.jwt,
+      verify: (...args: unknown[]) => jwtVerify(...args),
+    },
+  };
+});
 
 vi.mock("../models/access-token", () => ({
   AccessToken: { findByToken: (...args: unknown[]) => accessTokenFindByToken(...args) },
@@ -23,6 +31,7 @@ vi.mock("../models/access-token", () => ({
 
 import { authMiddleware } from "./auth.middleware";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
+import { makeCtx } from "./test-support/make-ctx";
 
 function buildRequest(authorizationValue?: string) {
   return {
@@ -70,7 +79,7 @@ describe("authMiddleware", () => {
     const request = buildRequest(undefined);
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.MissingAccessToken }),
@@ -87,7 +96,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
     expect(request.user).toEqual({ id: 1, userType: "user" });
@@ -102,7 +111,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.Unauthorized }),
@@ -119,7 +128,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
     expect(request.user).toEqual({ id: 1, userType: "user" });
@@ -133,7 +142,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
@@ -156,7 +165,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
@@ -174,7 +183,7 @@ describe("authMiddleware", () => {
 
     const middleware = authMiddleware([]);
 
-    await middleware(buildRequest("valid-token") as never, buildResponse() as never);
+    await middleware(makeCtx({ request: buildRequest("valid-token"), response: buildResponse() }));
 
     expect(destroy).toHaveBeenCalledOnce();
   });
@@ -191,7 +200,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
@@ -214,7 +223,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
     expect(request.user).toEqual({ id: 1, userType: "user" });
@@ -230,7 +239,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(destroy).toHaveBeenCalledOnce();
     expect(response.unauthorized).toHaveBeenCalledWith(
@@ -238,14 +247,20 @@ describe("authMiddleware", () => {
     );
   });
 
-  it("rejects and clears the current user when token verification throws", async () => {
-    jwtVerify.mockRejectedValue(new Error("malformed token"));
+  // D5. Only a `fast-jwt` `TokenError` (or this package's own `TokenTypeError`,
+  // D6) carries a `code` an allowlist can recognise — so a forged/malformed/
+  // expired JWT is simulated the way `fast-jwt` actually throws it: an error
+  // object with `.code`, not a bare `Error("message")`.
+  it("rejects and clears the current user when the JWT itself is invalid (forged/malformed/expired)", async () => {
+    jwtVerify.mockRejectedValue(Object.assign(new Error("malformed token"), {
+      code: "FAST_JWT_MALFORMED",
+    }));
 
     const middleware = authMiddleware([]);
     const request = buildRequest("garbage-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(request.clearCurrentUser).toHaveBeenCalledOnce();
     expect(response.unauthorized).toHaveBeenCalledWith(
@@ -253,7 +268,89 @@ describe("authMiddleware", () => {
     );
   });
 
-  it("rejects when the resolved user type maps to no registered model", async () => {
+  it("rejects an expired JWT (FAST_JWT_EXPIRED) with 401, not a thrown error", async () => {
+    jwtVerify.mockRejectedValue(Object.assign(new Error("token expired"), {
+      code: "FAST_JWT_EXPIRED",
+    }));
+
+    const middleware = authMiddleware([]);
+    const request = buildRequest("expired-token");
+    const response = buildResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.unauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
+    );
+  });
+
+  // D6. `assertTokenType` (services/jwt.ts) throws a `TokenTypeError` carrying
+  // `AuthErrorCodes.InvalidTokenType` for a refresh-token-where-access-token
+  // -required mismatch — a genuine credential error, and now classifiable.
+  it("rejects a tokenType mismatch (D6) with 401, same as a bad JWT", async () => {
+    jwtVerify.mockRejectedValue(
+      Object.assign(new Error('Invalid token type: expected "access", received "refresh".'), {
+        code: AuthErrorCodes.InvalidTokenType,
+      }),
+    );
+
+    const middleware = authMiddleware([]);
+    const request = buildRequest("refresh-token-used-as-access");
+    const response = buildResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(request.clearCurrentUser).toHaveBeenCalledOnce();
+    expect(response.unauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
+    );
+  });
+
+  // D5. The defect: `authConfig.accessToken.secret()` throws a plain `Error`
+  // (no `code`) from *inside* `jwt.verify` when `JWT_SECRET` is missing/empty.
+  // A broad catch answered 401 for this — mass "invalid token" on every
+  // request during a config fault. It must now propagate untouched: no
+  // `clearCurrentUser`, no `unauthorized` response, the caller sees the throw.
+  it("propagates (does not answer 401) when jwt.verify fails for a reason with no error code — e.g. a missing JWT secret", async () => {
+    jwtVerify.mockRejectedValue(
+      new Error("auth: no JWT secret configured — set `auth.accessToken.secret`."),
+    );
+
+    const middleware = authMiddleware([]);
+    const request = buildRequest("some-token");
+    const response = buildResponse();
+
+    await expect(middleware(makeCtx({ request, response }))).rejects.toThrow(
+      /no JWT secret configured/,
+    );
+
+    expect(request.clearCurrentUser).not.toHaveBeenCalled();
+    expect(response.unauthorized).not.toHaveBeenCalled();
+  });
+
+  // D5. A DB/cache outage in the storage lookup is a server fault, not a
+  // verdict on the caller's credential — it must not read as "invalid access
+  // token" and must not clear the caller's session.
+  it("propagates (does not answer 401) when the access-token storage lookup throws", async () => {
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockRejectedValue(new Error("connection to database lost"));
+
+    const middleware = authMiddleware([]);
+    const request = buildRequest("valid-token");
+    const response = buildResponse();
+
+    await expect(middleware(makeCtx({ request, response }))).rejects.toThrow(
+      /connection to database lost/,
+    );
+
+    expect(request.clearCurrentUser).not.toHaveBeenCalled();
+    expect(response.unauthorized).not.toHaveBeenCalled();
+  });
+
+  // D5. An unknown/mis-registered user type is a deployment fault (the app
+  // never registered a model for this token's principal), not a bad
+  // credential — it must propagate rather than read as "invalid access token".
+  it("propagates (does not answer 401) when the resolved user type maps to no registered model", async () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "ghost" });
     accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "ghost" }));
     configKey.mockImplementation((key: string, fallback?: unknown) =>
@@ -264,11 +361,11 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
-
-    expect(response.unauthorized).toHaveBeenCalledWith(
-      expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
+    await expect(middleware(makeCtx({ request, response }))).rejects.toThrow(
+      /ghost is unknown type/,
     );
+
+    expect(response.unauthorized).not.toHaveBeenCalled();
   });
 
   it("falls back to the access-token row's userType when the decoded token has none", async () => {
@@ -281,7 +378,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(configKey).toHaveBeenCalledWith("auth.userType.admin");
     expect(response.unauthorized).not.toHaveBeenCalled();
@@ -298,7 +395,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("valid-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(request.decodedAccessToken).toEqual(decoded);
   });
@@ -312,7 +409,7 @@ describe("authMiddleware", () => {
     const request = buildRequest("the-raw-token");
     const response = buildResponse();
 
-    await middleware(request as never, response as never);
+    await middleware(makeCtx({ request, response }));
 
     expect(accessTokenFindByToken).toHaveBeenCalledWith("the-raw-token");
   });
