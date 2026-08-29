@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Authentication system for Warlock.js applications",
   "main": "./src/index.ts",
+  "warlock": {
+    "environment": "server"
+  },
   "scripts": {
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
