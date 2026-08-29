@@ -10,6 +10,10 @@ yarn add @warlock.js/auth
 
 `@warlock.js/auth` is coupled to `@warlock.js/core` — install it inside a Warlock project.
 
+## Server-only
+
+`@warlock.js/auth`'s entire runtime surface is server-only — its `package.json` declares `"warlock": { "environment": "server" }`. `@warlock.js/web`'s build treats this as a boundary: app client code cannot value-import this package (type-only imports are still allowed), while server loaders/controllers/modules can import it freely.
+
 ## Configure
 
 ```ts title="src/config/auth.ts"

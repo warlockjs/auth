@@ -742,6 +742,8 @@ JWT authentication for Warlock apps. You get a base `Auth` model your user types
 
 Coupled to `@warlock.js/core` — you're inside a Warlock project before this package makes sense.
 
+Server-only: `package.json` declares `"warlock": { "environment": "server" }`. `@warlock.js/web`'s build refuses app client code that value-imports this package; type-only imports are allowed, and server loaders/controllers/modules are unaffected.
+
 ## When to reach for it
 
 - You're building a Warlock app that needs login, protected routes, and token-based sessions.
