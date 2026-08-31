@@ -22,6 +22,12 @@
     "@testcontainers/mongodb": "^10.28.0",
     "@testcontainers/postgresql": "^10.28.0",
     "@types/ms": "^2.1.0",
+    "@warlock.js/cache": "workspace:^",
+    "@warlock.js/cascade": "workspace:^",
+    "@warlock.js/core": "workspace:^",
+    "@warlock.js/fs": "workspace:^",
+    "@warlock.js/logger": "workspace:^",
+    "@warlock.js/seal": "workspace:^",
     "mongodb": "^7.2.0",
     "pg": "^8.21.0",
     "vitest": "4.1.10"
@@ -49,5 +55,6 @@
   "author": "hassanzohdy",
   "license": "MIT",
   "module": "./src/index.ts",
-  "typings": "./src/index.ts"
+  "typings": "./src/index.ts",
+  "packageManager": "pnpm@11.24.0"
 }
