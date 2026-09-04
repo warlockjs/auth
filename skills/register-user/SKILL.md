@@ -11,10 +11,10 @@ Two-step on the server: create the user (with hashed password), then issue token
 
 ```ts
 import { authService } from "@warlock.js/auth";
-import { hashPassword } from "@warlock.js/core";
+import { hashPassword, type RequestHandler } from "@warlock.js/core";
 import { User } from "@/app/users/models/user.model";
 
-async function registerController(request: Request, response: Response) {
+export const registerController: RequestHandler = async ({ request, response }) => {
   const { email, password, name } = request.all();
 
   // 1. Check duplicates
@@ -41,7 +41,7 @@ async function registerController(request: Request, response: Response) {
     user,         // shape via static toJsonColumns / static resource
     tokens,
   });
-}
+};
 ```
 
 That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see [`@warlock.js/seal/handle-seal-errors/SKILL.md`](@warlock.js/seal/handle-seal-errors/SKILL.md) for catching validation failures.

@@ -61,13 +61,15 @@ On failure, the middleware returns one of these 401 responses:
 ## Reading the user in a controller
 
 ```ts
-async function accountController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const accountController: RequestHandler = async ({ request, response }) => {
   const user = request.user!;          // typed via your Auth subclass
   return response.success({
     id: user.id,
     email: user.get("email"),
   });
-}
+};
 ```
 
 Because the middleware always requires a valid token, `request.user` is guaranteed present inside any gated controller (the middleware would have responded 401 otherwise). The `!` is safe here.
@@ -88,10 +90,12 @@ Every route inside the group is gated — the group's `middleware` array applies
 There is no "hydrate `request.user` if a token is present, otherwise continue" mode. `authMiddleware` always requires a valid token. If a route should be reachable anonymously, leave the middleware off — and read the token yourself in the controller if you want soft personalization:
 
 ```ts
-async function feedController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const feedController: RequestHandler = async ({ request, response }) => {
   const token = request.authorizationValue;
   // optionally decode/hydrate manually when a token is present
-}
+};
 ```
 
 ## Custom error responses

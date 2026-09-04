@@ -11,9 +11,10 @@ description: 'Run the full login flow via authService.login(Model, credentials, 
 
 ```ts
 import { authService } from "@warlock.js/auth";
+import { type RequestHandler } from "@warlock.js/core";
 import { User } from "@/app/users/models/user.model";
 
-async function loginController(request: Request, response: Response) {
+export const loginController: RequestHandler = async ({ request, response }) => {
   const result = await authService.login(User, {
     email: request.input("email"),
     password: request.input("password"),
@@ -30,7 +31,7 @@ async function loginController(request: Request, response: Response) {
     user: result.user,
     tokens: result.tokens,
   });
-}
+};
 ```
 
 The returned shape:
@@ -82,7 +83,9 @@ Useful for "show active sessions" UIs — see `authService.getActiveSessions(use
 ## Logout — `authService.logout(user, accessToken?, refreshToken?)`
 
 ```ts
-async function logoutController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const logoutController: RequestHandler = async ({ request, response }) => {
   await authService.logout(
     request.user!,
     request.authorizationValue,        // access token from the Authorization header
@@ -90,7 +93,7 @@ async function logoutController(request: Request, response: Response) {
   );
 
   return response.success({ message: "Logged out" });
-}
+};
 ```
 
 The contract:
@@ -114,7 +117,9 @@ Useful for "logout from all devices" buttons. Fires `token.revoked` per token + 
 ## Refresh tokens — `authService.refreshTokens(refreshTokenString, deviceInfo?)`
 
 ```ts
-async function refreshController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const refreshController: RequestHandler = async ({ request, response }) => {
   const tokens = await authService.refreshTokens(
     request.input("refreshToken"),
     { userAgent: request.header("user-agent"), ip: request.ip },
@@ -125,7 +130,7 @@ async function refreshController(request: Request, response: Response) {
   }
 
   return response.success({ tokens });
-}
+};
 ```
 
 Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md).

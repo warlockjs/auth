@@ -20,7 +20,7 @@ JWT-based authentication for Warlock. `Auth` base model + `authMiddleware` gate 
 ## Install
 
 ```bash
-yarn add @warlock.js/auth
+pnpm add @warlock.js/auth
 ```
 
 ## Foundations
@@ -399,9 +399,10 @@ description: 'Run the full login flow via authService.login(Model, credentials, 
 
 ```ts
 import { authService } from "@warlock.js/auth";
+import { type RequestHandler } from "@warlock.js/core";
 import { User } from "@/app/users/models/user.model";
 
-async function loginController(request: Request, response: Response) {
+export const loginController: RequestHandler = async ({ request, response }) => {
   const result = await authService.login(User, {
     email: request.input("email"),
     password: request.input("password"),
@@ -418,7 +419,7 @@ async function loginController(request: Request, response: Response) {
     user: result.user,
     tokens: result.tokens,
   });
-}
+};
 ```
 
 The returned shape:
@@ -470,7 +471,9 @@ Useful for "show active sessions" UIs — see `authService.getActiveSessions(use
 ## Logout — `authService.logout(user, accessToken?, refreshToken?)`
 
 ```ts
-async function logoutController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const logoutController: RequestHandler = async ({ request, response }) => {
   await authService.logout(
     request.user!,
     request.authorizationValue,        // access token from the Authorization header
@@ -478,7 +481,7 @@ async function logoutController(request: Request, response: Response) {
   );
 
   return response.success({ message: "Logged out" });
-}
+};
 ```
 
 The contract:
@@ -502,7 +505,9 @@ Useful for "logout from all devices" buttons. Fires `token.revoked` per token + 
 ## Refresh tokens — `authService.refreshTokens(refreshTokenString, deviceInfo?)`
 
 ```ts
-async function refreshController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const refreshController: RequestHandler = async ({ request, response }) => {
   const tokens = await authService.refreshTokens(
     request.input("refreshToken"),
     { userAgent: request.header("user-agent"), ip: request.ip },
@@ -513,7 +518,7 @@ async function refreshController(request: Request, response: Response) {
   }
 
   return response.success({ tokens });
-}
+};
 ```
 
 Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md).
@@ -872,13 +877,15 @@ On failure, the middleware returns one of these 401 responses:
 ## Reading the user in a controller
 
 ```ts
-async function accountController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const accountController: RequestHandler = async ({ request, response }) => {
   const user = request.user!;          // typed via your Auth subclass
   return response.success({
     id: user.id,
     email: user.get("email"),
   });
-}
+};
 ```
 
 Because the middleware always requires a valid token, `request.user` is guaranteed present inside any gated controller (the middleware would have responded 401 otherwise). The `!` is safe here.
@@ -899,10 +906,12 @@ Every route inside the group is gated — the group's `middleware` array applies
 There is no "hydrate `request.user` if a token is present, otherwise continue" mode. `authMiddleware` always requires a valid token. If a route should be reachable anonymously, leave the middleware off — and read the token yourself in the controller if you want soft personalization:
 
 ```ts
-async function feedController(request: Request, response: Response) {
+import { type RequestHandler } from "@warlock.js/core";
+
+export const feedController: RequestHandler = async ({ request, response }) => {
   const token = request.authorizationValue;
   // optionally decode/hydrate manually when a token is present
-}
+};
 ```
 
 ## Custom error responses
@@ -975,10 +984,10 @@ Two-step on the server: create the user (with hashed password), then issue token
 
 ```ts
 import { authService } from "@warlock.js/auth";
-import { hashPassword } from "@warlock.js/core";
+import { hashPassword, type RequestHandler } from "@warlock.js/core";
 import { User } from "@/app/users/models/user.model";
 
-async function registerController(request: Request, response: Response) {
+export const registerController: RequestHandler = async ({ request, response }) => {
   const { email, password, name } = request.all();
 
   // 1. Check duplicates
@@ -1005,7 +1014,7 @@ async function registerController(request: Request, response: Response) {
     user,         // shape via static toJsonColumns / static resource
     tokens,
   });
-}
+};
 ```
 
 That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see [`@warlock.js/seal/handle-seal-errors/SKILL.md`](@warlock.js/seal/handle-seal-errors/SKILL.md) for catching validation failures.
@@ -1134,7 +1143,7 @@ export default defineConfig({
 ## `warlock jwt.generate` — JWT secret bootstrap
 
 ```bash
-yarn warlock jwt.generate
+pnpm warlock jwt.generate
 ```
 
 Generates a cryptographically strong secret string and writes it to your `.env` as `JWT_SECRET=...` (and `JWT_REFRESH_SECRET=...` if refresh tokens are enabled).
@@ -1146,7 +1155,7 @@ Run it once when setting up a new project. Each developer typically runs it loca
 ## `warlock auth.cleanup` — expired token sweep
 
 ```bash
-yarn warlock auth.cleanup
+pnpm warlock auth.cleanup
 ```
 
 Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed, then sweeps expired access-token rows too. Fires `token.expired` per refresh token and `cleanup.completed` once.
@@ -1174,7 +1183,7 @@ In-process — no shell call. See [`@warlock.js/scheduler/scheduler-basics/SKILL
 ### Via system cron
 
 ```cron
-0 3 * * *  cd /path/to/app && /usr/local/bin/yarn warlock auth.cleanup
+0 3 * * *  cd /path/to/app && /usr/local/bin/pnpm warlock auth.cleanup
 ```
 
 Out-of-process — works when you don't want the scheduler subsystem running in this service.
@@ -1188,8 +1197,8 @@ If you have very-short-lived refresh tokens (1h expiry) and a million-user scale
 ## `warlock auth.purge-never-expiring` — one-off remediation
 
 ```bash
-yarn warlock auth.purge-never-expiring --dry-run   # report only
-yarn warlock auth.purge-never-expiring             # report, then revoke
+pnpm warlock auth.purge-never-expiring --dry-run   # report only
+pnpm warlock auth.purge-never-expiring             # report, then revoke
 ```
 
 Register with `registerAuthPurgeNeverExpiringCommand()`.
