@@ -31,7 +31,7 @@ export default defineConfig({
 ## `warlock jwt.generate` — JWT secret bootstrap
 
 ```bash
-pnpm warlock jwt.generate
+npx warlock jwt.generate
 ```
 
 Generates a cryptographically strong secret string and writes it to your `.env` as `JWT_SECRET=...` (and `JWT_REFRESH_SECRET=...` if refresh tokens are enabled).
@@ -43,7 +43,7 @@ Run it once when setting up a new project. Each developer typically runs it loca
 ## `warlock auth.cleanup` — expired token sweep
 
 ```bash
-pnpm warlock auth.cleanup
+npx warlock auth.cleanup
 ```
 
 Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed, then sweeps expired access-token rows too. Fires `token.expired` per refresh token and `cleanup.completed` once.
@@ -71,7 +71,7 @@ In-process — no shell call. See [`@warlock.js/scheduler/scheduler-basics/SKILL
 ### Via system cron
 
 ```cron
-0 3 * * *  cd /path/to/app && /usr/local/bin/pnpm warlock auth.cleanup
+0 3 * * *  cd /path/to/app && /usr/local/bin/npx warlock auth.cleanup
 ```
 
 Out-of-process — works when you don't want the scheduler subsystem running in this service.
@@ -85,8 +85,8 @@ If you have very-short-lived refresh tokens (1h expiry) and a million-user scale
 ## `warlock auth.purge-never-expiring` — one-off remediation
 
 ```bash
-pnpm warlock auth.purge-never-expiring --dry-run   # report only
-pnpm warlock auth.purge-never-expiring             # report, then revoke
+npx warlock auth.purge-never-expiring --dry-run   # report only
+npx warlock auth.purge-never-expiring             # report, then revoke
 ```
 
 Register with `registerAuthPurgeNeverExpiringCommand()`.

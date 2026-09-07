@@ -12,7 +12,7 @@ JWT-based authentication for Warlock. `Auth` base model + `authMiddleware` gate 
 ## Install
 
 ```bash
-pnpm add @warlock.js/auth
+npm install @warlock.js/auth
 ```
 
 ## Foundations
