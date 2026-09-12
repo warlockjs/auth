@@ -414,3 +414,97 @@ describe("authMiddleware", () => {
     expect(accessTokenFindByToken).toHaveBeenCalledWith("the-raw-token");
   });
 });
+
+/**
+ * A logged-out human navigating to a guarded PAGE route should be redirected to
+ * the login screen, not handed the API's raw JSON 401 (finding b9ab9804). This
+ * is OPT-IN via `auth.pageAuth.loginPath` and backward-compatible: an API route,
+ * or a page route with no `loginPath` configured, keeps the JSON 401 contract
+ * unchanged. The page-vs-API signal is `request.route.isPage`.
+ */
+describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
+  /** A response that can BOTH send JSON 401 and redirect, so we see which it did. */
+  function buildPageResponse() {
+    return { unauthorized: vi.fn(), redirect: vi.fn() };
+  }
+
+  /** A request on a route of the given kind, at a given URL, with no credential. */
+  function buildRouteRequest(isPage: boolean, url: string) {
+    return {
+      authorizationValue: undefined,
+      // `cookie:token` reads the credential via request.cookie(); no cookie set
+      // ⇒ empty ⇒ the missing-token rejection, which is the path under test.
+      cookie: vi.fn(() => undefined),
+      user: undefined as unknown,
+      decodedAccessToken: undefined as unknown,
+      clearCurrentUser: vi.fn(),
+      route: { isPage },
+      url,
+    };
+  }
+
+  /** Route `config.key` so `auth.pageAuth.loginPath` resolves to `loginPath`. */
+  function stubPageAuth(loginPath: string | undefined) {
+    configKey.mockImplementation((key: string, fallback?: unknown) => {
+      if (key === "auth.pageAuth.loginPath") return loginPath;
+
+      return fallback; // returnUrlParam → "returnUrl"; everything else → default
+    });
+  }
+
+  it("redirects a guarded PAGE request to loginPath with the original path as returnUrl", async () => {
+    stubPageAuth("/login");
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/admin/posts");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/login?returnUrl=%2Fadmin%2Fposts");
+    // Never the raw JSON blob for a browser navigating to a page.
+    expect(response.unauthorized).not.toHaveBeenCalled();
+  });
+
+  it("still returns JSON 401 for an API route under the same guard (contract unchanged)", async () => {
+    stubPageAuth("/login");
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(false, "/api/posts");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.unauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.MissingAccessToken }),
+    );
+    expect(response.redirect).not.toHaveBeenCalled();
+  });
+
+  it("leaves a PAGE route on JSON 401 when no loginPath is configured (opt-in, backward-compatible)", async () => {
+    stubPageAuth(undefined);
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/admin/posts");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.unauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.MissingAccessToken }),
+    );
+    expect(response.redirect).not.toHaveBeenCalled();
+  });
+
+  it("appends returnUrl with & when the configured loginPath already carries a query", async () => {
+    stubPageAuth("/login?flow=admin");
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/admin/posts");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/login?flow=admin&returnUrl=%2Fadmin%2Fposts");
+  });
+});

@@ -129,6 +129,24 @@ export const authConfig = {
         authConfig.accessToken.expiresIn() ?? DEFAULT_ACCESS_TOKEN_EXPIRES_IN,
       ),
   },
+  pageAuth: {
+    /**
+     * Login path a guarded PAGE route redirects a logged-out browser to.
+     *
+     * Unset (the default) ⇒ page-route auth failures keep the JSON 401 API
+     * contract, so existing apps see NO behavior change. Set it (e.g. "/login")
+     * to opt a browser-facing app into login-redirect UX: a logged-out human
+     * navigating to a guarded page lands on the login screen instead of reading
+     * a raw JSON error blob. Finding b9ab9804.
+     */
+    loginPath: (): string | undefined => config.key("auth.pageAuth.loginPath"),
+    /**
+     * Query parameter the redirect carries the originally-requested path in, so
+     * the login flow can send the user back where they were headed. Defaults to
+     * `"returnUrl"`.
+     */
+    returnUrlParam: (): string => config.key("auth.pageAuth.returnUrlParam", "returnUrl"),
+  },
   refreshToken: {
     /** Separate refresh secret (legacy: `auth.jwt.refresh.secret`); empty ⇒ fall back to the access secret. */
     secret: (): string | undefined => resolve("refreshToken.secret", "jwt.refresh.secret"),

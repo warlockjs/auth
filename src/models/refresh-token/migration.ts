@@ -12,7 +12,10 @@ export const RefreshTokenMigration = migrate(RefreshToken, {
 
     // Token fields
     this.text("token").unique();
-    this.uuid("user_id").index();
+    // `foreignId` matches the DataSource's default primary-key type so the
+    // column stays compatible with the user model's `id` (integer by default,
+    // or uuid) — hardcoding uuid here 500'd login on integer-PK apps (5e47bdb3).
+    this.foreignId("user_id").index();
     this.string("user_type", 50).nullable();
     this.text("family_id").index().nullable();
     this.timestamp("expires_at").index().nullable();

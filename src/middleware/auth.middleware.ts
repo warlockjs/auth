@@ -1,10 +1,47 @@
-import { config, t, type Middleware, type Request } from "@warlock.js/core";
+import { config, type HttpContext, t, type Middleware, type Request } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
 import type { TokenFrom } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
+import { authConfig } from "../services/auth-config";
 import { authService } from "../services/auth.service";
 import { isInvalidCredentialError, jwt } from "../services/jwt";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
+
+/** The 401 body shape every rejection in this middleware carries. */
+type UnauthorizedPayload = { error: string; errorCode: string };
+
+/**
+ * Reject an unauthenticated request, choosing the representation by ROUTE KIND.
+ *
+ * An API route always gets the JSON 401 it has always gotten. A PAGE route
+ * (`request.route.isPage` — the React-SSR pages) instead redirects a logged-out
+ * browser to the configured login path with a `returnUrl`, so a human
+ * navigating to a guarded page lands on the login screen rather than reading a
+ * raw JSON error blob — the defect in finding b9ab9804.
+ *
+ * The redirect is OPT-IN and backward-compatible: with no `auth.pageAuth.loginPath`
+ * configured, even a page route falls back to the JSON 401, so an app that has
+ * not asked for page-login UX keeps exactly its current behavior. The API 401
+ * contract is never changed for API routes.
+ *
+ * `returnUrl` carries `request.url` — the relative path + query the browser was
+ * on — never the absolute URL: a relative target cannot be turned into an
+ * open-redirect off this app's origin.
+ */
+function rejectUnauthorized({ request, response }: HttpContext, payload: UnauthorizedPayload) {
+  const loginPath = authConfig.pageAuth.loginPath();
+
+  if (loginPath && request.route?.isPage) {
+    const separator = loginPath.includes("?") ? "&" : "?";
+    const returnUrl = encodeURIComponent(request.url);
+
+    return response.redirect(
+      `${loginPath}${separator}${authConfig.pageAuth.returnUrlParam()}=${returnUrl}`,
+    );
+  }
+
+  return response.unauthorized(payload);
+}
 
 /**
  * Decoded access-token claims the middleware reads. The full payload carries
@@ -75,7 +112,7 @@ export function authMiddleware(
     const authorizationValue = readCredential(request, tokenFrom);
 
     if (!authorizationValue) {
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.missingAccessToken"),
         errorCode: AuthErrorCodes.MissingAccessToken,
       });
@@ -104,7 +141,7 @@ export function authMiddleware(
 
       request.clearCurrentUser();
 
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.invalidAccessToken"),
         errorCode: AuthErrorCodes.InvalidAccessToken,
       });
@@ -118,7 +155,7 @@ export function authMiddleware(
     const accessToken = await AccessTokenModel.findByToken(authorizationValue);
 
     if (!accessToken) {
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.invalidAccessToken"),
         errorCode: AuthErrorCodes.InvalidAccessToken,
       });
@@ -131,7 +168,7 @@ export function authMiddleware(
     if (accessTokenRowIsExpired(accessToken)) {
       await accessToken.destroy();
 
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.invalidAccessToken"),
         errorCode: AuthErrorCodes.InvalidAccessToken,
       });
@@ -140,7 +177,7 @@ export function authMiddleware(
     const userType = decoded.userType ?? accessToken.userType;
 
     if (allowedTypes.length && !allowedTypes.includes(userType)) {
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.unauthorized"),
         errorCode: AuthErrorCodes.Unauthorized,
       });
@@ -159,14 +196,14 @@ export function authMiddleware(
     if (!currentUser) {
       await accessToken.destroy();
 
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.invalidAccessToken"),
         errorCode: AuthErrorCodes.InvalidAccessToken,
       });
     }
 
     if (!(await authService.canAuthenticate(currentUser))) {
-      return response.unauthorized({
+      return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.unauthorized"),
         errorCode: AuthErrorCodes.Unauthorized,
       });
