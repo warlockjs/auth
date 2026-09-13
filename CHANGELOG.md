@@ -4,6 +4,16 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.8.0 - 2026-09-13
+
+### Added
+
+- Guarded page routes can redirect a logged-out browser to a configurable login path instead of returning a raw JSON 401 — opt-in via `auth.pageAuth.loginPath` (API routes still return the JSON 401).
+
+### Fixed
+
+- The `access_tokens` / `refresh_tokens` migrations now derive the `user_id` column type from the user model's primary key (via `foreignId`), so a fresh app with an integer-PK user can log in — the hardcoded `uuid` `user_id` previously failed the first login with no diagnostic.
+
 ## 5.5.0 - 2026-09-07
 
 ### Fixed
