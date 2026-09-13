@@ -82,7 +82,7 @@ Behavior, precisely:
 
 The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthConfig` on `AuthConfigurations` (`loginPath?: string`, `returnUrlParam?: string`, default `"returnUrl"`); read at runtime through `authConfig.pageAuth`.
 
-> The redirect approach may be revisited in a later version; this documents the shipped 5.8 behavior.
+> `auth.pageAuth` is **not a second auth mechanism** — it is a convenience *adapter* over the same "not authenticated" outcome the gate already produces. It only changes the **representation** of that outcome on a page route (a browser-friendly login redirect) instead of the JSON `401`; the decision that the request is unauthenticated is unchanged. The sanctioned *generic* way to make authentication soft is the app-owned optional-auth middleware below — `pageAuth` is the built-in adapter for the common "redirect a logged-out human to /login" case, so most apps never need to hand-roll it.
 
 ## Reading the user in a controller
 
@@ -111,18 +111,30 @@ router.group({ prefix: "/admin", middleware: [authMiddleware("admin")] }, () => 
 
 Every route inside the group is gated — the group's `middleware` array applies to each route in the callback. Cleaner than repeating the middleware on each route.
 
-## No optional / fallthrough auth
+## Optional auth is an app-owned middleware (the sanctioned pattern)
 
-There is no "hydrate `request.user` if a token is present, otherwise continue" mode. `authMiddleware` always requires a valid token. If a route should be reachable anonymously, leave the middleware off — and read the token yourself in the controller if you want soft personalization:
+`authMiddleware` is a **hard gate** — it always requires a valid token and rejects when one is absent. There is deliberately no built-in "hydrate `request.user` if a token is present, otherwise continue" mode, because the *sanctioned generic pattern* for soft/optional auth is a small **app-owned optional-auth middleware**: resolve the user when a valid token is present, and otherwise leave the route to decide. The app owns it because the "what to do when absent" policy is the app's, not the framework's.
 
-```ts
-import { type RequestHandler } from "@warlock.js/core";
+```ts title="src/app/middleware/optional-auth.middleware.ts"
+import { type Middleware } from "@warlock.js/core";
+import { jwt } from "@warlock.js/auth";
 
-export const feedController: RequestHandler = async ({ request, response }) => {
+// The one sanctioned optional-auth shape: resolve if present, never reject.
+// Middleware receives the context object ({ request, response }), like a handler.
+export const optionalAuth: Middleware = async ({ request }) => {
   const token = request.authorizationValue;
-  // optionally decode/hydrate manually when a token is present
+  if (!token) return; // absent → continue anonymously; the route decides
+  try {
+    const decoded = await jwt.verify(token);
+    // hydrate request.user from your token/user model when valid
+  } catch {
+    // invalid token on an optional route → treat as anonymous, don't reject
+  }
+  // returning nothing (undefined) === continue to the handler
 };
 ```
+
+Wire it like any middleware (`{ middleware: [optionalAuth] }`), then branch on `request.user` in the controller. Use `authMiddleware` when the route must be gated; use this when the route is public but personalizes for a signed-in user. `auth.pageAuth` (above) is the built-in **adapter** over this same "unauthenticated" outcome for the common page-redirect case — it is not a competing mechanism.
 
 ## Custom error responses
 
