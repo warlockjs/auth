@@ -141,6 +141,29 @@ export type LegacyJwtConfig = {
   };
 };
 
+/**
+ * Page-route auth-failure behavior. When a guarded PAGE route (a React-SSR page,
+ * `route.isPage`) rejects a logged-out browser, this decides whether it redirects
+ * to a login page instead of returning the API-style JSON 401.
+ *
+ * Read at runtime through `authConfig.pageAuth` (`auth.pageAuth.*`). API routes
+ * always keep the JSON 401 contract regardless of this setting.
+ */
+export type PageAuthConfig = {
+  /**
+   * Login path a guarded page route redirects a logged-out browser to (e.g.
+   * `"/login"`). Unset ⇒ page-route auth failures keep the JSON 401, so the
+   * behavior is opt-in and backward-compatible.
+   */
+  loginPath?: string;
+  /**
+   * Query parameter the redirect carries the originally-requested path in, so
+   * the login flow can send the user back where they were headed.
+   * @default "returnUrl"
+   */
+  returnUrlParam?: string;
+};
+
 export type AuthConfigurations = {
   /**
    * Define all user types — maps a user-type slug to its `Auth` model class so
@@ -162,6 +185,12 @@ export type AuthConfigurations = {
    * Refresh-token configuration (rotation, lifetime, cap, model override).
    */
   refreshToken?: RefreshTokenConfig;
+  /**
+   * Page-route auth-failure behavior — set `loginPath` to redirect a logged-out
+   * browser on a guarded PAGE route to a login page instead of the JSON 401.
+   * Opt-in; API routes are unaffected. Read via `authConfig.pageAuth`.
+   */
+  pageAuth?: PageAuthConfig;
   /**
    * @deprecated Use `accessToken` / `refreshToken`. Read via a backward-compatible shim.
    */
