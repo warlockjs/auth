@@ -874,6 +874,32 @@ On failure, the middleware returns one of these 401 responses:
 | `InvalidAccessToken` | Token doesn't verify (signature, missing/passed `exp`, wrong token type), has no DB row, or the row's `expires_at` has passed |
 | `Unauthorized` | Token valid but user-type isn't in the allowed list |
 
+## Page routes: redirect to login instead of the JSON 401
+
+By default every auth failure — API or page — returns the JSON `401` above. That's right for an API client, but a logged-out human who *navigates* to a guarded page route gets a raw JSON error blob instead of a login screen.
+
+Opt into a redirect with `auth.pageAuth` (5.8+). Set `loginPath` and a guarded **page** route (`route.isPage`) that a logged-out browser hits redirects to `loginPath?returnUrl=<original path>` instead of returning the JSON 401:
+
+```ts title="src/config/auth.ts"
+export default {
+  userType: { user: User },
+  pageAuth: {
+    loginPath: "/login",        // set this to turn the redirect on
+    returnUrlParam: "returnUrl", // optional, this is the default
+  },
+};
+```
+
+Behavior, precisely:
+
+- **Page route + `loginPath` set** → `302` redirect to `loginPath?returnUrl=<encoded request path>`. The login flow reads `returnUrl` to send the user back where they were headed. If `loginPath` already carries a query string, the param is appended with `&` instead of `?`.
+- **Page route + `loginPath` unset** → the JSON `401` is unchanged. The redirect is **opt-in**, so an app that hasn't configured `pageAuth` keeps exactly its current behavior.
+- **API route** → always the JSON `401`, regardless of `pageAuth`. The API contract is never altered.
+
+The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthConfig` on `AuthConfigurations` (`loginPath?: string`, `returnUrlParam?: string`, default `"returnUrl"`); read at runtime through `authConfig.pageAuth`.
+
+> The redirect approach may be revisited in a later version; this documents the shipped 5.8 behavior.
+
 ## Reading the user in a controller
 
 ```ts
