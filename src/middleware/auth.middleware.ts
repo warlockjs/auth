@@ -123,7 +123,7 @@ export function authMiddleware(
       });
     }
 
-    // CSRF Origin check (lead decision 3): only in scope for a cookie-sourced
+    // CSRF Origin check: only in scope for a cookie-sourced
     // credential on an unsafe method. Header-token auth and safe methods
     // (GET/HEAD/OPTIONS) never reach `assertCsrfOriginAllowed`.
     if (requiresCsrfOriginCheck(tokenFrom, request.method)) {

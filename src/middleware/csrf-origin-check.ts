@@ -14,8 +14,7 @@ export type CsrfOriginMismatchReason =
 
 /**
  * A cookie-authenticated, unsafe-method request whose `Origin`/`Referer`
- * failed the check (lead decision 3,
- * `releases/v5.12-cookie-auth-design-note.md`). `reason` names exactly why,
+ * failed the check. `reason` names exactly why,
  * so an error transformer or an incident log never has to string-match the
  * message.
  */
@@ -31,8 +30,9 @@ export class CsrfOriginMismatchError extends Error {
 /**
  * Whether a request is in scope for the CSRF Origin check at all — only a
  * `cookie:`-sourced credential on an unsafe method (POST/PUT/PATCH/DELETE) is.
- * Header-token auth and safe methods (GET/HEAD/OPTIONS) are always exempt,
- * matching lead decision 3: "Header-token authentication is unaffected."
+ * Header-token auth and safe methods (GET/HEAD/OPTIONS) are always exempt:
+ * only a cookie-sourced credential can be silently replayed cross-site by a
+ * browser, so only it needs the check.
  */
 export function requiresCsrfOriginCheck(tokenFrom: TokenFrom, method: string): boolean {
   return tokenFrom.startsWith("cookie:") && !SAFE_METHODS.has(method.toUpperCase());

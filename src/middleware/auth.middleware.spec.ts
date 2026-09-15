@@ -518,7 +518,7 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
 });
 
 /**
- * CSRF Origin check (lead decision 3, `releases/v5.12-cookie-auth-design-note.md`):
+ * CSRF Origin check:
  * a cookie-sourced credential on an unsafe method (POST/PUT/PATCH/DELETE) must
  * carry an `Origin` — or, absent that, `Referer` — naming the request's own
  * origin or an entry in `auth.csrf.allowedOrigins`. Header-token auth and safe
@@ -699,7 +699,7 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
  * here — see `auth-derived-cache-headers.spec.ts` in `web/` for that half;
  * this spec only pins the auth-side precondition the web behavior depends on.
  */
-describe("authMiddleware — cookie auth sets decodedAccessToken (cache-floor precondition, design note §4)", () => {
+describe("authMiddleware — cookie auth sets decodedAccessToken (cache-floor precondition)", () => {
   it("sets request.decodedAccessToken for a cookie-sourced credential, same as header auth", async () => {
     const decoded = { id: 1, userType: "user" };
     jwtVerify.mockResolvedValue(decoded);

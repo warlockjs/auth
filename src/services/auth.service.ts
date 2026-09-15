@@ -495,8 +495,7 @@ class AuthService {
 
   /**
    * Write the auth cookie on `response` — the write side of the `cookie:<name>`
-   * token source `authMiddleware([], "cookie:<name>")` already reads
-   * (card 50bf4f1a; `releases/v5.12-cookie-auth-design-note.md`). An explicit
+   * token source `authMiddleware([], "cookie:<name>")` already reads. An explicit
    * app-controller call, never a side effect of {@link login}, so an existing
    * bearer-only app never starts emitting `Set-Cookie` just by upgrading.
    *

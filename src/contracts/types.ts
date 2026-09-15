@@ -287,8 +287,7 @@ export type CookieAuthConfig = {
 };
 
 /**
- * CSRF Origin-check configuration (lead decision 3,
- * `releases/v5.12-cookie-auth-design-note.md`). Read via
+ * CSRF Origin-check configuration. Read via
  * `authConfig.csrf.allowedOrigins()`.
  */
 export type CsrfConfig = {
