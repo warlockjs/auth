@@ -192,6 +192,16 @@ export type AuthConfigurations = {
    */
   pageAuth?: PageAuthConfig;
   /**
+   * Cookie auth session config — read by `authService.setAuthCookie` /
+   * `clearAuthCookie`. Opt-in: unset ⇒ the helpers fall back to their own
+   * defaults (`name: "access_token"`, `path: "/"`).
+   */
+  cookie?: CookieAuthConfig;
+  /**
+   * CSRF Origin-check config for cookie-authenticated unsafe-method requests.
+   */
+  csrf?: CsrfConfig;
+  /**
    * @deprecated Use `accessToken` / `refreshToken`. Read via a backward-compatible shim.
    */
   jwt?: LegacyJwtConfig;
@@ -252,4 +262,68 @@ export type DeviceInfo = {
 export type LoginResult<UserType extends Auth> = {
   user: UserType;
   tokens: TokenPair;
+};
+
+/**
+ * Configuration for the cookie an app opts into via `authService.setAuthCookie`
+ * / `clearAuthCookie` and reads back with `authMiddleware([], "cookie:<name>")`.
+ * Attribute flags (`httpOnly` / `sameSite` / `secure`) are deliberately NOT
+ * configurable here — they come from core's `secureCookieDefaults()`, the
+ * same floor every `response.cookie()` call gets, so a cookie auth session can
+ * never be weakened to a laxer policy than the framework default.
+ */
+export type CookieAuthConfig = {
+  /**
+   * Cookie name `setAuthCookie`/`clearAuthCookie` write and clear, and that a
+   * `cookie:<name>` token source must match to read it back.
+   * @default "access_token"
+   */
+  name?: string;
+  /**
+   * Cookie `Path` attribute.
+   * @default "/"
+   */
+  path?: string;
+};
+
+/**
+ * CSRF Origin-check configuration (lead decision 3,
+ * `releases/v5.12-cookie-auth-design-note.md`). Read via
+ * `authConfig.csrf.allowedOrigins()`.
+ */
+export type CsrfConfig = {
+  /**
+   * Extra origins allowed on a cookie-authenticated unsafe-method request,
+   * in addition to the request's own origin.
+   * @default []
+   */
+  allowedOrigins?: string[];
+};
+
+/**
+ * Per-call overrides for {@link AuthService.setAuthCookie}. Anything omitted
+ * falls back to `auth.cookie.*` config, then the package default. Cookie
+ * *attribute* flags (`httpOnly`/`sameSite`/`secure`) are never settable here —
+ * see {@link CookieAuthConfig}.
+ */
+export type SetAuthCookieOptions = {
+  /** Cookie name; defaults to `auth.cookie.name` (package default `"access_token"`). */
+  name?: string;
+  /** Cookie `Path`; defaults to `auth.cookie.path` (package default `"/"`). */
+  path?: string;
+  /**
+   * `Max-Age`, in seconds. Overrides the expiry `setAuthCookie` would
+   * otherwise derive from an `AccessTokenOutput`'s `expiresAt`. Passing a
+   * bare token string with no `maxAge` produces a session cookie (cleared
+   * when the browser closes).
+   */
+  maxAge?: number;
+};
+
+/** Per-call overrides for {@link AuthService.clearAuthCookie}. */
+export type ClearAuthCookieOptions = {
+  /** Cookie name; defaults to `auth.cookie.name` (package default `"access_token"`). */
+  name?: string;
+  /** Cookie `Path`; defaults to `auth.cookie.path` (package default `"/"`). Must match the `Path` the cookie was set with. */
+  path?: string;
 };

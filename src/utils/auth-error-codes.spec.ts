@@ -12,6 +12,8 @@ describe("AuthErrorCodes", () => {
     expect(AuthErrorCodes.InvalidAccessToken).toBe("EC002");
     expect(AuthErrorCodes.Unauthorized).toBe("EC003");
     expect(AuthErrorCodes.TooManyAttempts).toBe("EC004");
+    expect(AuthErrorCodes.InvalidTokenType).toBe("EC005");
+    expect(AuthErrorCodes.CsrfOriginMismatch).toBe("EC006");
   });
 
   it("keeps every code unique", () => {

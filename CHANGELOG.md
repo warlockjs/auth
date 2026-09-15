@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 5.12.0
 
+### Added
+
+- `authService.setAuthCookie(response, token, options?)` and `authService.clearAuthCookie(response, options?)` — the write side of the `cookie:<name>` token source `authMiddleware([], "cookie:<name>")` has accepted since 5.0.0 (card 50bf4f1a). `setAuthCookie` accepts a raw token string or an `AccessTokenOutput` (deriving `Max-Age` from `expiresAt` automatically); both are explicit app-controller calls — `login`/`logout` never set cookies implicitly, so upgrading never starts emitting `Set-Cookie` for an existing bearer-only app. Cookie name/path are configurable via the new `auth.cookie` config block (defaults: `"access_token"` / `"/"`); attribute flags (`HttpOnly`, `SameSite=Lax`, `Secure` outside dev) are not — they come from core's `secureCookieDefaults()`, the framework-wide floor.
+
+### Security
+
+- **CSRF Origin check for cookie-authenticated writes.** `authMiddleware` now automatically rejects, with `403` (`AuthErrorCodes.CsrfOriginMismatch`, `"EC006"`), any request whose credential came from a `cookie:` source and whose method is unsafe (`POST`/`PUT`/`PATCH`/`DELETE`) unless `Origin` (or, absent that, `Referer`) names the request's own origin or an entry in the new `auth.csrf.allowedOrigins` config (default `[]`). A request with neither header is rejected, fail-closed. Header-token authentication and safe methods (`GET`/`HEAD`/`OPTIONS`) are completely unaffected. This closes the residual CSRF gap `SameSite=Lax` alone leaves open for cookie auth (a same-site GET redirect chain, or a client that ignores `SameSite`); a double-submit token mechanism is deferred to a later release.
+
 ### Changed
 
 - **BREAKING:** the authenticated user now lives at `request.locals.user`, declared by `@warlock.js/auth`. `request.user` is removed (in development it throws with the new location). `@warlock.js/auth`'s middleware writes `request.locals.user` after a successful token resolution and clears it (`= undefined`) on a forged, malformed, expired, or wrong-type token; `RequestUser` — the augmentable, empty-by-default interface apps narrow to their own model — moved from `@warlock.js/core` into `@warlock.js/auth` alongside it.

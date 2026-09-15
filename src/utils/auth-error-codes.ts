@@ -29,4 +29,12 @@ export enum AuthErrorCodes {
    * classify it as a credential failure without matching on the message.
    */
   InvalidTokenType = "EC005", // Error Code 005
+  /**
+   * CSRF Origin Mismatch Error Code EC006
+   * EC006 = a cookie-authenticated, unsafe-method (POST/PUT/PATCH/DELETE)
+   * request whose `Origin` (or, absent that, `Referer`) did not match the
+   * request's own origin or an entry in `auth.csrf.allowedOrigins`, or whose
+   * request carried neither header at all.
+   */
+  CsrfOriginMismatch = "EC006", // Error Code 006
 }

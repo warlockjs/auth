@@ -516,3 +516,208 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
     expect(response.redirect).toHaveBeenCalledWith("/login?flow=admin&returnUrl=%2Fadmin%2Fposts");
   });
 });
+
+/**
+ * CSRF Origin check (lead decision 3, `releases/v5.12-cookie-auth-design-note.md`):
+ * a cookie-sourced credential on an unsafe method (POST/PUT/PATCH/DELETE) must
+ * carry an `Origin` — or, absent that, `Referer` — naming the request's own
+ * origin or an entry in `auth.csrf.allowedOrigins`. Header-token auth and safe
+ * methods (GET/HEAD/OPTIONS) are completely unaffected.
+ */
+describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", () => {
+  const OWN_ORIGIN = "https://app.example.com";
+
+  /** A response that can answer 403 (forbidden), 401 (unauthorized), or neither (success). */
+  function buildCsrfResponse() {
+    return { unauthorized: vi.fn(), forbidden: vi.fn() };
+  }
+
+  /**
+   * A request on `https://app.example.com`, with the given method and
+   * Origin/Referer, presenting a credential via cookie or header depending on
+   * `source`.
+   */
+  function buildCsrfRequest(options: {
+    method: string;
+    source: "cookie" | "header";
+    origin?: string;
+    referer?: string;
+  }) {
+    const { method, source, origin, referer } = options;
+
+    return {
+      authorizationValue: source === "header" ? "the-token" : undefined,
+      cookie: vi.fn((name: string) => (source === "cookie" && name === "token" ? "the-token" : undefined)),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method,
+      origin,
+      protocol: "https",
+      hostname: "app.example.com",
+      header: vi.fn((name: string) => (name === "referer" ? referer : null)),
+    };
+  }
+
+  /** Full success chain, so an allowed request reaches `request.locals.user`. */
+  function stubSuccessfulAuth() {
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "user" }));
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
+  }
+
+  it("allows a cookie-authenticated POST when Origin matches the request's own origin", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({ method: "POST", source: "cookie", origin: OWN_ORIGIN });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(response.unauthorized).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("allows a cookie-authenticated POST when Origin is in auth.csrf.allowedOrigins", async () => {
+    stubSuccessfulAuth();
+    configKey.mockImplementation((key: string, fallback?: unknown) => {
+      if (key === "auth.csrf.allowedOrigins") return ["https://allowed.example.com"];
+      if (key.startsWith("auth.userType.")) return { find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) };
+
+      return fallback;
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: "https://allowed.example.com",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("rejects a cookie-authenticated POST from a foreign Origin with 403 CsrfOriginMismatch", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: "https://evil.example.com",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
+    );
+    expect(request.locals.user).toBeUndefined();
+  });
+
+  it("allows a cookie-authenticated POST with no Origin but a same-origin Referer", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      referer: `${OWN_ORIGIN}/some/page`,
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("rejects a cookie-authenticated POST with neither Origin nor Referer", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({ method: "POST", source: "cookie" });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
+    );
+    expect(request.locals.user).toBeUndefined();
+  });
+
+  it("leaves header-token auth unaffected: a foreign-Origin POST is allowed", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([]); // default tokenFrom: "header"
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "header",
+      origin: "https://evil.example.com",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("leaves safe methods unaffected: a cookie-authenticated GET from a foreign Origin is allowed", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "GET",
+      source: "cookie",
+      origin: "https://evil.example.com",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+});
+
+/**
+ * Regression spec for design-note section 4 (already-correct behavior, pinned
+ * here so it cannot silently regress): a cookie-sourced credential sets
+ * `request.decodedAccessToken` exactly like a header-sourced one, which is
+ * what makes `Request`'s `decodedAccessToken` setter mark
+ * `request.locals.authDerived = true` and therefore the page cache floor
+ * (`private, no-store`, `web/src/server/response-cache-floor.ts`) apply. The
+ * web-side assertion (`private, no-store` on an actual response) is NOT run
+ * here — see `auth-derived-cache-headers.spec.ts` in `web/` for that half;
+ * this spec only pins the auth-side precondition the web behavior depends on.
+ */
+describe("authMiddleware — cookie auth sets decodedAccessToken (cache-floor precondition, design note §4)", () => {
+  it("sets request.decodedAccessToken for a cookie-sourced credential, same as header auth", async () => {
+    const decoded = { id: 1, userType: "user" };
+    jwtVerify.mockResolvedValue(decoded);
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "user" }));
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn((name: string) => (name === "token" ? "the-token" : undefined)),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+    };
+    const response = { unauthorized: vi.fn(), forbidden: vi.fn() };
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(request.decodedAccessToken).toEqual(decoded);
+  });
+});

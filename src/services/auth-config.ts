@@ -147,6 +147,19 @@ export const authConfig = {
      */
     returnUrlParam: (): string => config.key("auth.pageAuth.returnUrlParam", "returnUrl"),
   },
+  cookie: {
+    /** Cookie name `setAuthCookie`/`clearAuthCookie` use. @default "access_token" */
+    name: (): string => config.key("auth.cookie.name", "access_token"),
+    /** Cookie `Path` attribute `setAuthCookie`/`clearAuthCookie` use. @default "/" */
+    path: (): string => config.key("auth.cookie.path", "/"),
+  },
+  csrf: {
+    /**
+     * Extra origins allowed on a cookie-authenticated unsafe-method request,
+     * beyond the request's own origin. @default []
+     */
+    allowedOrigins: (): string[] => config.key("auth.csrf.allowedOrigins", []),
+  },
   refreshToken: {
     /** Separate refresh secret (legacy: `auth.jwt.refresh.secret`); empty ⇒ fall back to the access secret. */
     secret: (): string | undefined => resolve("refreshToken.secret", "jwt.refresh.secret"),

@@ -6,6 +6,11 @@ import { authConfig } from "../services/auth-config";
 import { authService } from "../services/auth.service";
 import { isInvalidCredentialError, jwt } from "../services/jwt";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
+import {
+  assertCsrfOriginAllowed,
+  CsrfOriginMismatchError,
+  requiresCsrfOriginCheck,
+} from "./csrf-origin-check";
 
 /** The 401 body shape every rejection in this middleware carries. */
 type UnauthorizedPayload = { error: string; errorCode: string };
@@ -116,6 +121,26 @@ export function authMiddleware(
         error: t("auth.errors.missingAccessToken"),
         errorCode: AuthErrorCodes.MissingAccessToken,
       });
+    }
+
+    // CSRF Origin check (lead decision 3): only in scope for a cookie-sourced
+    // credential on an unsafe method. Header-token auth and safe methods
+    // (GET/HEAD/OPTIONS) never reach `assertCsrfOriginAllowed`.
+    if (requiresCsrfOriginCheck(tokenFrom, request.method)) {
+      try {
+        assertCsrfOriginAllowed(request);
+      } catch (error) {
+        if (!(error instanceof CsrfOriginMismatchError)) {
+          throw error;
+        }
+
+        log.error("http", "auth", error);
+
+        return response.forbidden({
+          error: t("auth.errors.csrfOriginMismatch"),
+          errorCode: AuthErrorCodes.CsrfOriginMismatch,
+        });
+      }
     }
 
     let decoded: DecodedAccessToken;

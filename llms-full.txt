@@ -984,13 +984,71 @@ if (await can(request.locals.user, "users.create", { resource: payload })) { /* 
 
 Use `authMiddleware` to establish *who the caller is*, and `access` to decide *what they may do*. They compose — `access` reads the user `authMiddleware` put on the request.
 
-## Sessions are bearer-token, not cookie
+## Cookie sessions: `authMiddleware([], "cookie:<name>")`
 
-The token is read from the `Authorization` header (`Bearer <token>` or `Key <token>`) and nowhere else. "Session" in this package means a **refresh-token row**, not an HTTP cookie session.
+`authMiddleware`'s second argument, `tokenFrom`, selects the credential source and defaults to `"header"`. Pass `` `cookie:<name>` `` to read the credential from a named cookie instead of the `Authorization` header — the same gate, the same three checks, the same `request.locals.user` / `request.decodedAccessToken` outcome, just a different place to find the token:
 
-There is no cookie-backed guard, no session store, and no cookie strategy in `authMiddleware` — that is the intended design, not an omission. Warlock's auth optimises for API services.
+```ts
+router.get("/browser-account", accountController, {
+  middleware: [authMiddleware([], "cookie:token")],
+});
+```
 
-If you want HttpOnly cookie sessions for a server-rendered admin, that is **app-level work**: set the cookie yourself with `response.cookie` (secure by default since 4.10.0) and read it in your own middleware, then hand the token to the same `authService` rotation logic. **You also own CSRF** — the framework ships no CSRF helper, and cookie auth needs one where bearer auth does not. A synchronizer token bound to the session plus `Origin`/`Referer` checks is the usual shape.
+A route is header-only or cookie-only, never both — `tokenFrom` accepts exactly one source, so there is no header/cookie precedence to define. A route that legitimately needs to accept either composes two `authMiddleware` instances against the app's own optional-auth pattern (above).
+
+### Writing and clearing the cookie: `authService.setAuthCookie` / `clearAuthCookie`
+
+Reading a cookie is opt-in per route (above); *writing* one is a separate, explicit step your login/logout controller calls — `authService.login`/`logout` never set cookies implicitly, so upgrading never starts emitting `Set-Cookie` for an existing bearer-only app.
+
+```ts
+import { authService } from "@warlock.js/auth";
+
+// after issuing tokens
+const { user, tokens } = await authService.login(User, credentials);
+authService.setAuthCookie(response, tokens.accessToken); // Max-Age derived from tokens.accessToken.expiresAt
+
+// after revoking tokens
+await authService.logout(user, accessToken, refreshToken);
+authService.clearAuthCookie(response);
+```
+
+`setAuthCookie(response, token, options?)` accepts either the raw token string or an `AccessTokenOutput` (`{ token, expiresAt }`, e.g. `tokens.accessToken` from `login`) — passing the latter derives `Max-Age` from `expiresAt` automatically; pass `options.maxAge` (seconds) to override it, or a bare string with no `maxAge` for a session cookie. `clearAuthCookie(response, options?)` clears it.
+
+Cookie **attribute flags are not configurable** — `HttpOnly`, `SameSite=Lax`, and `Secure` outside development come from core's `secureCookieDefaults()`, the same floor every `response.cookie()` call gets. Only the cookie's `name` (default `"access_token"`) and `path` (default `"/"`) can be set, via `options` or the `auth.cookie` config block:
+
+```ts title="src/config/auth.ts"
+export default {
+  userType: { user: User },
+  cookie: {
+    name: "access_token", // must match the `cookie:<name>` a route reads
+    path: "/",
+  },
+};
+```
+
+The cookie name `setAuthCookie`/`clearAuthCookie` write **must match** the name a `cookie:<name>` token source reads — they are not linked automatically.
+
+### CSRF: an automatic Origin check on cookie-authenticated writes
+
+Cookie auth changes the CSRF picture that bearer-token auth doesn't have: a browser attaches cookies to same-site requests it didn't originate. `SameSite=Lax` already blocks the classic cross-site `<form method="post">` case, but not a same-site GET redirect chain or a client that ignores `SameSite`.
+
+To close that gap, `authMiddleware` automatically runs a CSRF Origin check on every request whose credential came from a `cookie:` source **and** whose method is unsafe (`POST`/`PUT`/`PATCH`/`DELETE`) — there is nothing to opt into, and nothing to configure to turn it on:
+
+- **Allowed** when `Origin` equals the request's own origin, or is listed in `auth.csrf.allowedOrigins` (config, default `[]`).
+- If `Origin` is absent, `Referer`'s origin is checked the same way.
+- If **both** are absent, or the check fails, the request is rejected with `403` and `errorCode: AuthErrorCodes.CsrfOriginMismatch` ("EC006") — never silently passed through.
+- **Header-token auth is completely unaffected**, as are safe methods (`GET`/`HEAD`/`OPTIONS`) under cookie auth.
+
+```ts title="src/config/auth.ts"
+export default {
+  userType: { user: User },
+  csrf: {
+    allowedOrigins: ["https://admin.example.com"], // extra trusted origins, beyond same-origin
+  },
+};
+```
+
+This is an Origin check, not a double-submit CSRF token — cheaper, and closes the gap `SameSite=Lax` leaves open, but it doesn't help a client whose privacy proxy strips both `Origin` and `Referer` (that request is rejected outright, fail-closed, rather than silently allowed). A double-submit token mechanism is deferred to a later release; track it if your threat model includes Origin-stripping clients.
 
 ## Things NOT to do
 

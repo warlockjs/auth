@@ -1,11 +1,19 @@
 import { Random } from "@mongez/reinforcements";
 import type { ChildModel } from "@warlock.js/cascade";
-import { config, ForbiddenError, hashPassword, verifyPassword } from "@warlock.js/core";
+import {
+  config,
+  ForbiddenError,
+  hashPassword,
+  type Response,
+  verifyPassword,
+} from "@warlock.js/core";
 import type {
   AccessTokenOutput,
   AuthCredentials,
+  ClearAuthCookieOptions,
   DeviceInfo,
   LoginResult,
+  SetAuthCookieOptions,
   TokenPair,
 } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
@@ -468,6 +476,77 @@ class AuthService {
    */
   public async getActiveSessions(user: Auth): Promise<RefreshToken[]> {
     return this.refreshTokenModel.activeFor(user);
+  }
+
+  /**
+   * `Max-Age` (seconds) `setAuthCookie` should apply, derived from an
+   * `AccessTokenOutput`'s `expiresAt` — or `undefined` for a bare token
+   * string (a session cookie) or an unparseable `expiresAt`.
+   */
+  private cookieMaxAgeFromToken(token: string | AccessTokenOutput): number | undefined {
+    if (typeof token === "string") return undefined;
+
+    const expiresAt = new Date(token.expiresAt).getTime();
+
+    if (Number.isNaN(expiresAt)) return undefined;
+
+    return Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+  }
+
+  /**
+   * Write the auth cookie on `response` — the write side of the `cookie:<name>`
+   * token source `authMiddleware([], "cookie:<name>")` already reads
+   * (card 50bf4f1a; `releases/v5.12-cookie-auth-design-note.md`). An explicit
+   * app-controller call, never a side effect of {@link login}, so an existing
+   * bearer-only app never starts emitting `Set-Cookie` just by upgrading.
+   *
+   * Attribute flags (`HttpOnly`, `SameSite=Lax`, `Secure` outside dev) come
+   * from `response.cookie()`'s own `secureCookieDefaults()` floor — this
+   * method never overrides them, only `name`/`path`/`maxAge`. `raw: true`
+   * writes the token unquoted, so the same string a `cookie:<name>` source
+   * reads back is exactly what was issued, not a JSON-wrapped copy.
+   *
+   * @param token - the token string, or an `AccessTokenOutput` (e.g. from
+   *   {@link login}) whose `expiresAt` sets `Max-Age` automatically when
+   *   `options.maxAge` is not given. A bare string with no `options.maxAge`
+   *   produces a session cookie.
+   *
+   * @example
+   * const { user, tokens } = await authService.login(User, credentials);
+   * authService.setAuthCookie(response, tokens.accessToken);
+   */
+  public setAuthCookie(
+    response: Response,
+    token: string | AccessTokenOutput,
+    options: SetAuthCookieOptions = {},
+  ): void {
+    const name = options.name ?? authConfig.cookie.name();
+    const path = options.path ?? authConfig.cookie.path();
+    const tokenValue = typeof token === "string" ? token : token.token;
+    const maxAge = options.maxAge ?? this.cookieMaxAgeFromToken(token);
+
+    response.cookie(name, tokenValue, {
+      raw: true,
+      path,
+      ...(maxAge !== undefined ? { maxAge } : {}),
+    });
+  }
+
+  /**
+   * Clear the auth cookie {@link setAuthCookie} wrote. An explicit
+   * app-controller call — pair it with {@link logout} after the token row is
+   * revoked. `path` must match what the cookie was set with, or the browser
+   * silently ignores the clear (see `response.clearCookie`'s own doc comment).
+   *
+   * @example
+   * await authService.logout(user, accessToken, refreshToken);
+   * authService.clearAuthCookie(response);
+   */
+  public clearAuthCookie(response: Response, options: ClearAuthCookieOptions = {}): void {
+    const name = options.name ?? authConfig.cookie.name();
+    const path = options.path ?? authConfig.cookie.path();
+
+    response.clearCookie(name, { path });
   }
 }
 
