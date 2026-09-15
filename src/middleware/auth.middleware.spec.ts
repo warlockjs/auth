@@ -36,9 +36,8 @@ import { makeCtx } from "./test-support/make-ctx";
 function buildRequest(authorizationValue?: string) {
   return {
     authorizationValue,
-    user: undefined as unknown,
+    locals: { user: undefined as unknown },
     decodedAccessToken: undefined as unknown,
-    clearCurrentUser: vi.fn(),
   };
 }
 
@@ -84,7 +83,7 @@ describe("authMiddleware", () => {
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.MissingAccessToken }),
     );
-    expect(request.user).toBeUndefined();
+    expect(request.locals.user).toBeUndefined();
   });
 
   it("allows any authenticated user when called with an empty array", async () => {
@@ -99,7 +98,7 @@ describe("authMiddleware", () => {
     await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
-    expect(request.user).toEqual({ id: 1, userType: "user" });
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
   });
 
   it("rejects an authenticated user whose type is not in the allow-list", async () => {
@@ -116,7 +115,7 @@ describe("authMiddleware", () => {
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.Unauthorized }),
     );
-    expect(request.user).toBeUndefined();
+    expect(request.locals.user).toBeUndefined();
   });
 
   it("allows an authenticated user whose type matches the allow-list", async () => {
@@ -131,7 +130,7 @@ describe("authMiddleware", () => {
     await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
-    expect(request.user).toEqual({ id: 1, userType: "user" });
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
   });
 
   it("rejects when the token verifies but no access-token row exists", async () => {
@@ -147,7 +146,7 @@ describe("authMiddleware", () => {
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
     );
-    expect(request.user).toBeUndefined();
+    expect(request.locals.user).toBeUndefined();
   });
 
   // #27 (b). Independent of the `exp`-claim guard in `jwt.verify`: here the
@@ -170,7 +169,7 @@ describe("authMiddleware", () => {
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
     );
-    expect(request.user).toBeUndefined();
+    expect(request.locals.user).toBeUndefined();
   });
 
   it("deletes the dead row on the way out rather than leaving it for cleanup", async () => {
@@ -205,7 +204,7 @@ describe("authMiddleware", () => {
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
     );
-    expect(request.user).toBeUndefined();
+    expect(request.locals.user).toBeUndefined();
   });
 
   // #27 (c). The guard must not cost the normal path: a live row, an unexpired
@@ -226,7 +225,7 @@ describe("authMiddleware", () => {
     await middleware(makeCtx({ request, response }));
 
     expect(response.unauthorized).not.toHaveBeenCalled();
-    expect(request.user).toEqual({ id: 1, userType: "user" });
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
   });
 
   it("destroys the access-token row and rejects when the user no longer exists", async () => {
@@ -251,18 +250,24 @@ describe("authMiddleware", () => {
   // D6) carries a `code` an allowlist can recognise — so a forged/malformed/
   // expired JWT is simulated the way `fast-jwt` actually throws it: an error
   // object with `.code`, not a bare `Error("message")`.
-  it("rejects and clears the current user when the JWT itself is invalid (forged/malformed/expired)", async () => {
+  // Two-sided control (pins the defect returning if the clear is ever
+  // removed): seed a PREVIOUSLY-set identity on `request.locals.user`, then
+  // assert the outcome — the identity does not survive a forged/malformed/
+  // expired token — rather than asserting a `clearCurrentUser()` call that
+  // no longer exists.
+  it("rejects and clears a previously-set identity when the JWT itself is invalid (forged/malformed/expired)", async () => {
     jwtVerify.mockRejectedValue(Object.assign(new Error("malformed token"), {
       code: "FAST_JWT_MALFORMED",
     }));
 
     const middleware = authMiddleware([]);
     const request = buildRequest("garbage-token");
+    request.locals.user = { id: 99, userType: "user" };
     const response = buildResponse();
 
     await middleware(makeCtx({ request, response }));
 
-    expect(request.clearCurrentUser).toHaveBeenCalledOnce();
+    expect(request.locals.user).toBeUndefined();
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
     );
@@ -287,7 +292,7 @@ describe("authMiddleware", () => {
   // D6. `assertTokenType` (services/jwt.ts) throws a `TokenTypeError` carrying
   // `AuthErrorCodes.InvalidTokenType` for a refresh-token-where-access-token
   // -required mismatch — a genuine credential error, and now classifiable.
-  it("rejects a tokenType mismatch (D6) with 401, same as a bad JWT", async () => {
+  it("rejects a tokenType mismatch (D6) with 401, same as a bad JWT, and clears a previously-set identity", async () => {
     jwtVerify.mockRejectedValue(
       Object.assign(new Error('Invalid token type: expected "access", received "refresh".'), {
         code: AuthErrorCodes.InvalidTokenType,
@@ -296,11 +301,12 @@ describe("authMiddleware", () => {
 
     const middleware = authMiddleware([]);
     const request = buildRequest("refresh-token-used-as-access");
+    request.locals.user = { id: 99, userType: "user" };
     const response = buildResponse();
 
     await middleware(makeCtx({ request, response }));
 
-    expect(request.clearCurrentUser).toHaveBeenCalledOnce();
+    expect(request.locals.user).toBeUndefined();
     expect(response.unauthorized).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.InvalidAccessToken }),
     );
@@ -309,8 +315,9 @@ describe("authMiddleware", () => {
   // D5. The defect: `authConfig.accessToken.secret()` throws a plain `Error`
   // (no `code`) from *inside* `jwt.verify` when `JWT_SECRET` is missing/empty.
   // A broad catch answered 401 for this — mass "invalid token" on every
-  // request during a config fault. It must now propagate untouched: no
-  // `clearCurrentUser`, no `unauthorized` response, the caller sees the throw.
+  // request during a config fault. It must now propagate untouched: a
+  // previously-set identity survives (nothing clears it), no `unauthorized`
+  // response, the caller sees the throw.
   it("propagates (does not answer 401) when jwt.verify fails for a reason with no error code — e.g. a missing JWT secret", async () => {
     jwtVerify.mockRejectedValue(
       new Error("auth: no JWT secret configured — set `auth.accessToken.secret`."),
@@ -318,13 +325,14 @@ describe("authMiddleware", () => {
 
     const middleware = authMiddleware([]);
     const request = buildRequest("some-token");
+    request.locals.user = { id: 99, userType: "user" };
     const response = buildResponse();
 
     await expect(middleware(makeCtx({ request, response }))).rejects.toThrow(
       /no JWT secret configured/,
     );
 
-    expect(request.clearCurrentUser).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 99, userType: "user" });
     expect(response.unauthorized).not.toHaveBeenCalled();
   });
 
@@ -337,13 +345,14 @@ describe("authMiddleware", () => {
 
     const middleware = authMiddleware([]);
     const request = buildRequest("valid-token");
+    request.locals.user = { id: 99, userType: "user" };
     const response = buildResponse();
 
     await expect(middleware(makeCtx({ request, response }))).rejects.toThrow(
       /connection to database lost/,
     );
 
-    expect(request.clearCurrentUser).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 99, userType: "user" });
     expect(response.unauthorized).not.toHaveBeenCalled();
   });
 
@@ -382,7 +391,7 @@ describe("authMiddleware", () => {
 
     expect(configKey).toHaveBeenCalledWith("auth.userType.admin");
     expect(response.unauthorized).not.toHaveBeenCalled();
-    expect(request.user).toEqual({ id: 1, userType: "admin" });
+    expect(request.locals.user).toEqual({ id: 1, userType: "admin" });
   });
 
   it("stores the decoded access token on the request before resolving the user", async () => {
@@ -435,9 +444,8 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
       // `cookie:token` reads the credential via request.cookie(); no cookie set
       // ⇒ empty ⇒ the missing-token rejection, which is the path under test.
       cookie: vi.fn(() => undefined),
-      user: undefined as unknown,
+      locals: { user: undefined as unknown },
       decodedAccessToken: undefined as unknown,
-      clearCurrentUser: vi.fn(),
       route: { isPage },
       url,
     };

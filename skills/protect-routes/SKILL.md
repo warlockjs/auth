@@ -1,6 +1,6 @@
 ---
 name: protect-routes
-description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — `@warlock.js/auth/customize-user-type/SKILL.md`; issuing the token — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
+description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — `@warlock.js/auth/customize-user-type/SKILL.md`; issuing the token — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
 ---
 
 # Gate routes with `authMiddleware`
@@ -38,7 +38,7 @@ The `userType` slug must match a key in `config.auth.userType.<name>` — see [`
 On success, before your controller runs:
 
 ```ts
-request.user = <hydrated user model instance>;
+request.locals.user = <hydrated user model instance>;
 request.decodedAccessToken = <decoded JWT payload>;
 ```
 
@@ -90,7 +90,7 @@ The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthCo
 import { type RequestHandler } from "@warlock.js/core";
 
 export const accountController: RequestHandler = async ({ request, response }) => {
-  const user = request.user!;          // typed via your Auth subclass
+  const user = request.locals.user!;          // typed via your Auth subclass
   return response.success({
     id: user.id,
     email: user.get("email"),
@@ -98,7 +98,7 @@ export const accountController: RequestHandler = async ({ request, response }) =
 };
 ```
 
-Because the middleware always requires a valid token, `request.user` is guaranteed present inside any gated controller (the middleware would have responded 401 otherwise). The `!` is safe here.
+Because the middleware always requires a valid token, `request.locals.user` is guaranteed present inside any gated controller (the middleware would have responded 401 otherwise). The `!` is safe here.
 
 ## Route-group protection
 
@@ -113,7 +113,7 @@ Every route inside the group is gated — the group's `middleware` array applies
 
 ## Optional auth is an app-owned middleware (the sanctioned pattern)
 
-`authMiddleware` is a **hard gate** — it always requires a valid token and rejects when one is absent. There is deliberately no built-in "hydrate `request.user` if a token is present, otherwise continue" mode, because the *sanctioned generic pattern* for soft/optional auth is a small **app-owned optional-auth middleware**: resolve the user when a valid token is present, and otherwise leave the route to decide. The app owns it because the "what to do when absent" policy is the app's, not the framework's.
+`authMiddleware` is a **hard gate** — it always requires a valid token and rejects when one is absent. There is deliberately no built-in "hydrate `request.locals.user` if a token is present, otherwise continue" mode, because the *sanctioned generic pattern* for soft/optional auth is a small **app-owned optional-auth middleware**: resolve the user when a valid token is present, and otherwise leave the route to decide. The app owns it because the "what to do when absent" policy is the app's, not the framework's.
 
 ```ts title="src/app/middleware/optional-auth.middleware.ts"
 import { type Middleware } from "@warlock.js/core";
@@ -126,7 +126,7 @@ export const optionalAuth: Middleware = async ({ request }) => {
   if (!token) return; // absent → continue anonymously; the route decides
   try {
     const decoded = await jwt.verify(token);
-    // hydrate request.user from your token/user model when valid
+    // hydrate request.locals.user from your token/user model when valid
   } catch {
     // invalid token on an optional route → treat as anonymous, don't reject
   }
@@ -134,7 +134,7 @@ export const optionalAuth: Middleware = async ({ request }) => {
 };
 ```
 
-Wire it like any middleware (`{ middleware: [optionalAuth] }`), then branch on `request.user` in the controller. Use `authMiddleware` when the route must be gated; use this when the route is public but personalizes for a signed-in user. `auth.pageAuth` (above) is the built-in **adapter** over this same "unauthenticated" outcome for the common page-redirect case — it is not a competing mechanism.
+Wire it like any middleware (`{ middleware: [optionalAuth] }`), then branch on `request.locals.user` in the controller. Use `authMiddleware` when the route must be gated; use this when the route is public but personalizes for a signed-in user. `auth.pageAuth` (above) is the built-in **adapter** over this same "unauthenticated" outcome for the common page-redirect case — it is not a competing mechanism.
 
 ## Custom error responses
 
@@ -163,7 +163,7 @@ definePolicy("users.create", (actor, target, ctx) =>
   ctx.hasRole("superAdmin") || (target as User).userType === "teacher",
 );
 
-if (await can(request.user, "users.create", { resource: payload })) { /* ... */ }
+if (await can(request.locals.user, "users.create", { resource: payload })) { /* ... */ }
 ```
 
 Use `authMiddleware` to establish *who the caller is*, and `access` to decide *what they may do*. They compose — `access` reads the user `authMiddleware` put on the request.
@@ -180,7 +180,7 @@ If you want HttpOnly cookie sessions for a server-rendered admin, that is **app-
 
 - Don't call `authMiddleware` outside route definition. It returns a function — the function is what runs per-request. Calling it once per request creates a fresh middleware on every hit (wasteful) and a fresh allowed-types Set (correctness if the input changes per call).
 - Don't manually decode JWTs in the controller. The middleware already does it and exposes the decoded payload via `request.decodedAccessToken`.
-- Don't trust `request.user` set by client-supplied headers. The middleware is the only place that sets it on the server — client headers can't reach this slot.
+- Don't trust `request.locals.user` set by client-supplied headers. The middleware is the only place that sets it on the server — client headers can't reach this slot.
 - Don't pass an unknown user-type to `authMiddleware("typo")`. The middleware will reject every request because the lookup fails. Test the wire-up with a real token of each user type.
 
 ## See also

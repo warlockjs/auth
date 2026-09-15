@@ -4,6 +4,32 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.12.0
+
+### Changed
+
+- **BREAKING:** the authenticated user now lives at `request.locals.user`, declared by `@warlock.js/auth`. `request.user` is removed (in development it throws with the new location). `@warlock.js/auth`'s middleware writes `request.locals.user` after a successful token resolution and clears it (`= undefined`) on a forged, malformed, expired, or wrong-type token; `RequestUser` — the augmentable, empty-by-default interface apps narrow to their own model — moved from `@warlock.js/core` into `@warlock.js/auth` alongside it.
+
+  ```typescript
+  // Before (removed)
+  declare module "@warlock.js/core" {
+    interface RequestUser {
+      id: string | number;
+    }
+  }
+  const user = request.user;
+
+  // After
+  declare module "@warlock.js/auth" {
+    interface RequestUser {
+      id: string | number;
+    }
+  }
+  const user = request.locals.user;
+  ```
+
+  A typed `currentUser<UserType extends Auth>()` helper is also exported, wrapping core's `useCurrentUser()` for callers that want `Auth`-derived typing without repeating the assertion at every call site.
+
 ## 5.11.0 - 2026-09-14
 
 _Released in lockstep with the `@warlock.js/*` family; no package-specific changes in 5.11.0._

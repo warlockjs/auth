@@ -87,7 +87,7 @@ import { type RequestHandler } from "@warlock.js/core";
 
 export const logoutController: RequestHandler = async ({ request, response }) => {
   await authService.logout(
-    request.user!,
+    request.locals.user!,
     request.authorizationValue,        // access token from the Authorization header
     request.input("refreshToken"),     // refresh token from the request body
   );

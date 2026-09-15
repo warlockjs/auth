@@ -41,7 +41,7 @@ Start here. The `Auth` base model, `authMiddleware` gate, `authService` (login/l
 Sign up a new user and issue the first token pair — `User.create({ ...password: await hashPassword(plain) })` then `authService.createTokenPair(user)`. For `POST /register`.
 
 #### [`protect-routes`](@warlock.js/auth/protect-routes/SKILL.md)
-`authMiddleware(allowedUserType)` — the argument is required and always requires a valid token: `[]` allows any authenticated user, a user-type argument restricts to those types. Sets `request.user` + `request.decodedAccessToken`, responds 401 on failure.
+`authMiddleware(allowedUserType)` — the argument is required and always requires a valid token: `[]` allows any authenticated user, a user-type argument restricts to those types. Sets `request.locals.user` + `request.decodedAccessToken`, responds 401 on failure.
 
 ### Going deeper
 

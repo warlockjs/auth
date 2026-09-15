@@ -139,7 +139,12 @@ export function authMiddleware(
       // will never accept.
       log.error("http", "auth", error);
 
-      request.clearCurrentUser();
+      // Clearing rather than leaving a stale value matters: a request that
+      // failed authentication must not carry the identity of whoever
+      // `request.locals.user` last held (see the two-sided spec below that
+      // pins this — removing the clear must make the previous identity
+      // survive).
+      request.locals.user = undefined;
 
       return rejectUnauthorized({ request, response }, {
         error: t("auth.errors.invalidAccessToken"),
@@ -209,7 +214,7 @@ export function authMiddleware(
       });
     }
 
-    request.user = currentUser;
+    request.locals.user = currentUser;
   };
 
   return auth;
