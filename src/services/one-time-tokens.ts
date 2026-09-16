@@ -11,7 +11,7 @@ export type IssuedOneTimeToken = {
 };
 
 /** Resolve the active one-time-token model — the default or `auth.oneTimeToken.model`. */
-function oneTimeTokenModel(): typeof OneTimeToken {
+export function oneTimeTokenModel(): typeof OneTimeToken {
   return config.key("auth.oneTimeToken.model", OneTimeToken);
 }
 

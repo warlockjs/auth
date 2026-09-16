@@ -5,5 +5,8 @@ export * from "./contracts";
 export * from "./errors";
 export * from "./middleware";
 export * from "./models";
+export * from "./otp";
+export * from "./passkeys";
+export * from "./providers";
 export * from "./services";
 export * from "./utils";

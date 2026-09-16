@@ -53,7 +53,7 @@ const jwtGenerate = vi.fn();
 const jwtGenerateRefreshToken = vi.fn();
 const jwtVerifyRefreshToken = vi.fn();
 
-vi.mock("./jwt", async importOriginal => {
+vi.mock("./jwt", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./jwt")>();
 
   return {
@@ -87,6 +87,9 @@ vi.mock("@warlock.js/core", () => ({
   },
   hashPassword: (...args: unknown[]) => hashPassword(...args),
   verifyPassword: (...args: unknown[]) => verifyPassword(...args),
+  ForbiddenError: class extends Error {
+    public status = 403;
+  },
 }));
 
 vi.mock("@warlock.js/logger", () => ({
@@ -432,7 +435,12 @@ describe("authService.createTokenPair", () => {
     const pair = await authService.createTokenPair(buildUser());
 
     expect(pair.refreshToken).toBeUndefined();
-    expect(emit).not.toHaveBeenCalledWith("session.created", expect.anything(), expect.anything(), undefined);
+    expect(emit).not.toHaveBeenCalledWith(
+      "session.created",
+      expect.anything(),
+      expect.anything(),
+      undefined,
+    );
   });
 });
 
@@ -519,7 +527,9 @@ describe("authService.refreshTokens", () => {
 
   it("keeps the same family_id on the rotated pair", async () => {
     jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
-    refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam-keep" }, true));
+    refreshTokenFindByToken.mockResolvedValue(
+      buildRefreshTokenRow({ family_id: "fam-keep" }, true),
+    );
     configureRotation(true, buildUser());
 
     await authService.refreshTokens("valid");
@@ -594,6 +604,40 @@ describe("authService.login", () => {
   });
 });
 
+describe("authService.completeLogin", () => {
+  it("produces the same tokens and login.success event as password login", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const user = buildUser();
+    const Model = { first: vi.fn().mockResolvedValue(user) } as never;
+    verifyPassword.mockResolvedValue(true);
+
+    const viaPassword = await authService.login(Model, { email: "a@b.c", password: "x" });
+    const passwordEvents = emit.mock.calls
+      .map(([name]) => name)
+      .filter((name) => name !== "login.attempt");
+    emit.mockClear();
+
+    const viaProvider = await authService.completeLogin(user);
+    const providerEvents = emit.mock.calls.map(([name]) => name);
+
+    expect(viaProvider).toEqual(viaPassword);
+    expect(providerEvents).toEqual(passwordEvents);
+    expect(providerEvents).toContain("login.success");
+    now.mockRestore();
+  });
+
+  it("applies the canAuthenticate policy and issues nothing on refusal", async () => {
+    const user = buildUser();
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.canAuthenticate" ? () => false : fallback,
+    );
+
+    await expect(authService.completeLogin(user)).rejects.toMatchObject({ status: 403 });
+    expect(jwtGenerate).not.toHaveBeenCalled();
+    expect(accessTokenIssue).not.toHaveBeenCalled();
+  });
+});
+
 describe("authService.logout", () => {
   it("removes the access token when supplied", async () => {
     const user = buildUser({ id: 8 });
@@ -621,7 +665,11 @@ describe("authService.logout", () => {
 
     await authService.logout(buildUser(), undefined, "missing");
 
-    expect(emit).not.toHaveBeenCalledWith("session.destroyed", expect.anything(), expect.anything());
+    expect(emit).not.toHaveBeenCalledWith(
+      "session.destroyed",
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("revokes all tokens (fail-safe) when no refresh token is given", async () => {

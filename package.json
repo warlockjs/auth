@@ -39,10 +39,18 @@
     "@warlock.js/core": "*",
     "@warlock.js/logger": "*",
     "@warlock.js/seal": "*",
-    "@warlock.js/notifications": "*"
+    "@warlock.js/notifications": "*",
+    "@simplewebauthn/server": "^13.1.0",
+    "jose": "^6.1.0"
   },
   "peerDependenciesMeta": {
     "@warlock.js/notifications": {
+      "optional": true
+    },
+    "@simplewebauthn/server": {
+      "optional": true
+    },
+    "jose": {
       "optional": true
     }
   },

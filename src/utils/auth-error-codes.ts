@@ -50,4 +50,24 @@ export enum AuthErrorCodes {
    * four on purpose: the caller learns nothing about which it was.
    */
   InvalidOneTimeToken = "EC008", // Error Code 008
+  /**
+   * Invalid Provider Callback Error Code EC009
+   * EC009 = a redirect-provider callback was rejected: missing, forged or
+   * expired state cookie, `state` mismatch, failed code exchange, or an
+   * id_token with a bad signature, issuer, audience, expiry or nonce.
+   */
+  InvalidProviderCallback = "EC009", // Error Code 009
+  /**
+   * Provider Email Not Verified Error Code EC010
+   * EC010 = the provider did not verify the email, so auth refused to link or
+   * create an account from it.
+   */
+  ProviderEmailNotVerified = "EC010", // Error Code 010
+  /**
+   * Invalid Passkey Error Code EC011
+   * EC011 = a passkey ceremony was rejected: unknown, expired or used
+   * challenge, unknown credential, failed verification, or a signature counter
+   * that did not advance.
+   */
+  InvalidPasskey = "EC011", // Error Code 011
 }

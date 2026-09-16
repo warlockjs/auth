@@ -177,20 +177,18 @@ class AuthService {
     refreshTokenString: string,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair | null> {
-    let decoded:
-      | {
-          userId: number;
-          userType: string;
-          familyId: string;
-        }
-      | null;
+    let decoded: {
+      userId: number;
+      userType: string;
+      familyId: string;
+    } | null;
 
     try {
       decoded = await jwt.verifyRefreshToken<{
         userId: number;
         userType: string;
         familyId: string;
-    }>(refreshTokenString);
+      }>(refreshTokenString);
     } catch (error) {
       if (isInvalidCredentialError(error)) return null;
 
@@ -311,6 +309,32 @@ class AuthService {
       return null;
     }
 
+    return this.finalizeLogin(user, deviceInfo);
+  }
+
+  /**
+   * Log in a user some OTHER method already authenticated — a provider
+   * callback, a passkey assertion, a one-time code. Applies the
+   * `auth.canAuthenticate` policy (403 on refusal), then produces exactly
+   * what {@link login} produces: the same tokens, rows and events. Pair with
+   * {@link setAuthCookie} for a cookie session, as with password login.
+   *
+   * Never call this for a user you have not authenticated.
+   */
+  public async completeLogin<T extends Auth>(
+    user: T,
+    deviceInfo?: DeviceInfo,
+  ): Promise<LoginResult<T>> {
+    await this.assertCanAuthenticate(user);
+
+    return this.finalizeLogin(user, deviceInfo);
+  }
+
+  /** The one token-issuing tail every login method shares. */
+  private async finalizeLogin<T extends Auth>(
+    user: T,
+    deviceInfo?: DeviceInfo,
+  ): Promise<LoginResult<T>> {
     if (!authConfig.refreshToken.enabled()) {
       const accessToken = await this.issueAccessToken(user, deviceInfo?.payload);
 

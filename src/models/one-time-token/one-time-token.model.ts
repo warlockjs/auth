@@ -4,7 +4,12 @@ import { isUsableExpiry } from "../../utils/token-expiry";
 import type { Auth } from "../auth.model";
 
 /** What a one-time token may be used for. A token only ever satisfies its own purpose. */
-export type OneTimeTokenPurpose = "email-verification" | "password-reset";
+export type OneTimeTokenPurpose =
+  | "email-verification"
+  | "password-reset"
+  | "otp"
+  | "passkey-registration"
+  | "passkey-authentication";
 
 /**
  * Seal schema for the persisted one-time token. Exported so an override can
@@ -13,14 +18,17 @@ export type OneTimeTokenPurpose = "email-verification" | "password-reset";
 export const oneTimeTokenSchema = v.object({
   token_hash: v.string().required(),
   purpose: v.string().required(),
-  user_id: v.scalar().required(),
-  user_type: v.string().required(),
+  // Absent only on a passkey authentication challenge (no user identified yet).
+  user_id: v.scalar().optional(),
+  user_type: v.string().optional(),
   expires_at: v.date().required(),
   consumed_at: v.date().optional(),
+  attempts: v.int().optional(),
 });
 
 /**
- * Persisted email-verification / password-reset token.
+ * Persisted one-time secret: email-verification / password-reset token, OTP
+ * code, or passkey ceremony challenge.
  *
  * **Only a SHA-256 hash is stored** — the raw token exists in the notification
  * and nowhere else, so a leaked table cannot be replayed. Single use is
@@ -86,7 +94,58 @@ export class OneTimeToken extends Model {
       user_type: user.userType,
       expires_at: expiresAt,
       consumed_at: null,
+      attempts: 0,
     });
+  }
+
+  /**
+   * Persist a passkey ceremony challenge. `user` is omitted for an
+   * authentication challenge, issued before anyone is identified.
+   */
+  public static issueChallenge(
+    purpose: OneTimeTokenPurpose,
+    tokenHash: string,
+    expiresAt: Date,
+    user?: Auth,
+  ) {
+    return this.create({
+      token_hash: tokenHash,
+      purpose,
+      user_id: user?.id ?? null,
+      user_type: user?.userType ?? null,
+      expires_at: expiresAt,
+      consumed_at: null,
+      attempts: 0,
+    });
+  }
+
+  /** The user's newest unconsumed token of `purpose` (at most one for OTP). */
+  public static findActiveFor(
+    user: Auth,
+    purpose: OneTimeTokenPurpose,
+  ): Promise<OneTimeToken | null> {
+    return this.query()
+      .where({ user_id: user.id, user_type: user.userType, purpose, consumed_at: null })
+      .orderBy("created_at", "desc")
+      .first();
+  }
+
+  /**
+   * Atomically count one verify attempt, ONLY while fewer than `max` have been
+   * counted and the token is unconsumed. Resolves `false` once the cap is
+   * reached — of N concurrent attempts, at most `max` ever resolve `true`.
+   */
+  public async recordAttempt(max: number): Promise<boolean> {
+    const modelClass = this.constructor as typeof OneTimeToken;
+
+    const counted = await modelClass.atomic(
+      { id: this.id, consumed_at: null, attempts: { $lt: max } },
+      { $inc: { attempts: 1 } },
+      // Code-authored filter; nothing here comes from the request.
+      { trustedFilter: true },
+    );
+
+    return counted > 0;
   }
 
   /** Find a token by hash, scoped to a purpose — a token of the other purpose is not found. */

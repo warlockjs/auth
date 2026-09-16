@@ -74,7 +74,7 @@ vi.mock("@warlock.js/seal", () => {
     return proxy;
   };
 
-  return { v: { object: chained, string: chained, scalar: chained, date: chained } };
+  return { v: { object: chained, string: chained, scalar: chained, date: chained, int: chained } };
 });
 
 // ── core ────────────────────────────────────────────────────────────────────

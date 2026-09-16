@@ -9,6 +9,13 @@ import type {
   OneTimeTokenUrlBuilder,
   PasswordSetter,
 } from "../contracts/types";
+import type {
+  AuthProvider,
+  GoogleProviderConfig,
+  OtpSender,
+  PasskeysConfig,
+  ProviderUserCreator,
+} from "../contracts/providers";
 import type { Auth } from "../models/auth.model";
 
 const warnedLegacyKeys = new Set<string>();
@@ -69,6 +76,12 @@ const DEFAULT_VERIFICATION_EXPIRES_IN = "24h";
 /** Password-reset token lifetime used when nothing is configured. */
 const DEFAULT_PASSWORD_RESET_EXPIRES_IN = "60m";
 
+/** Passkey challenge lifetime used when nothing is configured. */
+const DEFAULT_PASSKEY_CHALLENGE_EXPIRES_IN = "5m";
+
+/** OTP lifetime used when nothing is configured. */
+const DEFAULT_OTP_EXPIRES_IN = "5m";
+
 /** Access-token lifetime used when nothing is configured. */
 const DEFAULT_ACCESS_TOKEN_EXPIRES_IN = "1h";
 
@@ -92,7 +105,11 @@ function resolve<T>(newKey: string, legacyKey: string, fallback?: T): T {
   if (fromLegacy !== undefined && fromLegacy !== null) {
     if (!warnedLegacyKeys.has(legacyKey)) {
       warnedLegacyKeys.add(legacyKey);
-      log.warn("auth", "config-deprecation", `auth.${legacyKey} is deprecated — use auth.${newKey}`);
+      log.warn(
+        "auth",
+        "config-deprecation",
+        `auth.${legacyKey} is deprecated — use auth.${newKey}`,
+      );
     }
 
     return fromLegacy as T;
@@ -182,8 +199,7 @@ export const authConfig = {
     /** User attribute stamped with the verification date. @default "emailVerifiedAt" */
     field: (): string => config.key("auth.verification.field", "emailVerifiedAt"),
     /** App notification replacing the default verification email. */
-    notification: (): AuthNotification | undefined =>
-      config.key("auth.verification.notification"),
+    notification: (): AuthNotification | undefined => config.key("auth.verification.notification"),
     /** Link builder whose result is handed to the notification as `url`. */
     url: (): OneTimeTokenUrlBuilder | undefined => config.key("auth.verification.url"),
   },
@@ -197,12 +213,67 @@ export const authConfig = {
     /** User attribute `requestPasswordReset` looks the account up by. @default "email" */
     identifierField: (): string => config.key("auth.passwordReset.identifierField", "email"),
     /** App notification replacing the default reset email. */
-    notification: (): AuthNotification | undefined =>
-      config.key("auth.passwordReset.notification"),
+    notification: (): AuthNotification | undefined => config.key("auth.passwordReset.notification"),
     /** Link builder whose result is handed to the notification as `url`. */
     url: (): OneTimeTokenUrlBuilder | undefined => config.key("auth.passwordReset.url"),
     /** App-owned password writer replacing the default. */
     setPassword: (): PasswordSetter | undefined => config.key("auth.passwordReset.setPassword"),
+  },
+  providers: {
+    /** `auth.providers.google`, when configured. */
+    google: (): GoogleProviderConfig | undefined => config.key("auth.providers.google"),
+    /** An app-registered provider under `auth.providers.custom.<name>`. */
+    custom: (name: string): AuthProvider | undefined =>
+      config.key<Record<string, AuthProvider>>("auth.providers.custom", {})[name],
+    /** User attribute a verified provider email is matched against. @default "email" */
+    emailField: (): string => config.key("auth.providers.emailField", "email"),
+    /** App-owned user creation for a first provider login. */
+    createUser: (): ProviderUserCreator | undefined => config.key("auth.providers.createUser"),
+  },
+  passkeys: {
+    /** `auth.passkeys`; throws naming the keys when `rpID`, `rpName` or `origin` is missing. */
+    settings: (): PasskeysConfig => {
+      const settings = config.key<PasskeysConfig | undefined>("auth.passkeys");
+
+      if (!settings?.rpID || !settings.rpName || !settings.origin) {
+        throw new Error(
+          "@warlock.js/auth: passkeys need `auth.passkeys.rpID`, `auth.passkeys.rpName` and `auth.passkeys.origin`.",
+        );
+      }
+
+      return settings;
+    },
+    /** Allowed ceremony origins, as a list. */
+    origins: (): string[] => {
+      const { origin } = authConfig.passkeys.settings();
+
+      return Array.isArray(origin) ? origin : [origin];
+    },
+    /** Challenge lifetime in ms; throws naming the key when unusable. @default "5m" */
+    challengeExpiresInMs: (): number =>
+      parseDuration(
+        "passkeys.challengeExpiresIn",
+        config.key("auth.passkeys.challengeExpiresIn", DEFAULT_PASSKEY_CHALLENGE_EXPIRES_IN),
+      ),
+  },
+  otp: {
+    /** Notifications channel the code is sent through. @default "sms" */
+    channel: (): string => config.key("auth.otp.channel", "sms"),
+    /** User attribute holding the phone number. @default "phone" */
+    phoneField: (): string => config.key("auth.otp.phoneField", "phone"),
+    /** Code lifetime in ms; throws naming the key when unusable. @default "5m" */
+    expiresInMs: (): number =>
+      parseDuration("otp.expiresIn", config.key("auth.otp.expiresIn", DEFAULT_OTP_EXPIRES_IN)),
+    /** Verify attempts before the code is invalidated. @default 5 */
+    maxAttempts: (): number => config.key("auth.otp.maxAttempts", 5),
+    /** The message text for a code. */
+    message: (code: string): string => {
+      const build = config.key<((code: string) => string) | undefined>("auth.otp.message");
+
+      return build ? build(code) : `Your verification code is ${code}`;
+    },
+    /** App-owned delivery replacing the notifications channel send. */
+    send: (): OtpSender | undefined => config.key("auth.otp.send"),
   },
   refreshToken: {
     /** Separate refresh secret (legacy: `auth.jwt.refresh.secret`); empty ⇒ fall back to the access secret. */

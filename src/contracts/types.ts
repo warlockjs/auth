@@ -3,6 +3,7 @@ import { type Algorithm } from "fast-jwt";
 import type { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import type { OneTimeToken } from "../models/one-time-token";
+import type { OtpConfig, PasskeysConfig, ProvidersConfig } from "./providers";
 import type { RefreshToken } from "../models/refresh-token";
 
 /**
@@ -296,6 +297,18 @@ export type AuthConfigurations = {
    * One-time token (verification / reset) storage — model override.
    */
   oneTimeToken?: OneTimeTokenConfig;
+  /**
+   * Redirect login providers (`google`, `custom`) and account-linking policy.
+   */
+  providers?: ProvidersConfig;
+  /**
+   * Passkey (WebAuthn) relying-party settings. Requires `@simplewebauthn/server`.
+   */
+  passkeys?: PasskeysConfig;
+  /**
+   * Phone one-time-code login — channel, lifetime, attempts, delivery.
+   */
+  otp?: OtpConfig;
   /**
    * @deprecated Use `accessToken` / `refreshToken`. Read via a backward-compatible shim.
    */

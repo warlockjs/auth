@@ -13,12 +13,16 @@ export const OneTimeTokenMigration = migrate(OneTimeToken, {
     this.string("purpose", 32);
 
     // `foreignId` follows the DataSource's default primary-key type, matching
-    // the access/refresh token tables.
-    this.foreignId("user_id").index();
+    // the access/refresh token tables. Nullable only for a passkey
+    // authentication challenge, which is issued before anyone is identified.
+    this.foreignId("user_id").nullable().index();
     this.string("user_type", 50).nullable();
 
     this.timestamp("expires_at").index().nullable();
     this.timestamp("consumed_at").nullable();
+
+    // Failed verify attempts — only OTP codes are capped on it.
+    this.integer("attempts").default(0);
 
     // Invalidating a user's previous reset tokens filters on these.
     this.index(["user_id", "user_type", "purpose"]);
