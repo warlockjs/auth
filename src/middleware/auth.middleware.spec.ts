@@ -542,8 +542,15 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
     source: "cookie" | "header";
     origin?: string;
     referer?: string;
+    protocol?: string;
+    hostname?: string;
+    /** Raw `Host` header value (may include a port), e.g. `"localhost:41910"`. */
+    host?: string;
   }) {
     const { method, source, origin, referer } = options;
+    const protocol = options.protocol ?? "https";
+    const hostname = options.hostname ?? "app.example.com";
+    const host = options.host ?? hostname;
 
     return {
       authorizationValue: source === "header" ? "the-token" : undefined,
@@ -552,9 +559,14 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
       decodedAccessToken: undefined as unknown,
       method,
       origin,
-      protocol: "https",
-      hostname: "app.example.com",
-      header: vi.fn((name: string) => (name === "referer" ? referer : null)),
+      protocol,
+      hostname,
+      header: vi.fn((name: string) => {
+        if (name === "referer") return referer;
+        if (name === "host") return host;
+
+        return null;
+      }),
     };
   }
 
@@ -678,6 +690,116 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
       method: "GET",
       source: "cookie",
       origin: "https://evil.example.com",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  /**
+   * `request.hostname` (Express/Fastify's hostname) never carries a port, but
+   * a browser's `Origin`/Host pair on a non-default port (any `warlock dev`
+   * session) always does. The own-origin comparison must include the port
+   * from the `Host` header, not just the bare hostname.
+   */
+  it("allows a cookie-authenticated POST when Origin is same-origin on a non-default port", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: "http://localhost:41910",
+      protocol: "http",
+      hostname: "localhost",
+      host: "localhost:41910",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("rejects a cookie-authenticated POST when Origin's port differs from the Host header's port", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: "http://localhost:3000",
+      protocol: "http",
+      hostname: "localhost",
+      host: "localhost:41910",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
+    );
+    expect(request.locals.user).toBeUndefined();
+  });
+
+  it("allows a cookie-authenticated POST when Origin omits the default port and Host carries it", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: OWN_ORIGIN,
+      protocol: "https",
+      hostname: "app.example.com",
+      host: "app.example.com:443",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).not.toHaveBeenCalled();
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("still rejects a cross-site Origin with a port with 403 CsrfOriginMismatch", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      origin: "https://evil.example.com:41910",
+      protocol: "http",
+      hostname: "localhost",
+      host: "localhost:41910",
+    });
+    const response = buildCsrfResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
+    );
+    expect(request.locals.user).toBeUndefined();
+  });
+
+  it("allows a cookie-authenticated POST with no Origin but a same-origin Referer carrying a port", async () => {
+    stubSuccessfulAuth();
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildCsrfRequest({
+      method: "POST",
+      source: "cookie",
+      referer: "http://localhost:41910/some/page",
+      protocol: "http",
+      hostname: "localhost",
+      host: "localhost:41910",
     });
     const response = buildCsrfResponse();
 

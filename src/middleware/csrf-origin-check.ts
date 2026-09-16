@@ -38,9 +38,20 @@ export function requiresCsrfOriginCheck(tokenFrom: TokenFrom, method: string): b
   return tokenFrom.startsWith("cookie:") && !SAFE_METHODS.has(method.toUpperCase());
 }
 
-/** The request's own origin — what an `Origin`/`Referer` header must match. */
+/**
+ * The request's own origin — what an `Origin`/`Referer` header must match.
+ *
+ * `request.hostname` (core's `Request`, backed by Express/Fastify's
+ * `hostname`) never carries a port. A browser's `Origin` header on a
+ * non-default port (e.g. any `warlock dev` session) does, so the port must
+ * come from the raw `Host` header instead — core exposes no getter for that,
+ * so it is read directly here.
+ */
 function ownOrigin(request: Request): string {
-  return `${request.protocol}://${request.hostname}`;
+  const hostHeader = request.header("host");
+  const host = typeof hostHeader === "string" && hostHeader ? hostHeader : request.hostname;
+
+  return `${request.protocol}://${host}`;
 }
 
 /** Extract `scheme://host` from a full URL (e.g. a `Referer` header value). */
@@ -54,9 +65,28 @@ function originOf(rawUrl: string): string | undefined {
   }
 }
 
+/**
+ * Normalize an origin string (`scheme://host[:port]`) so that a default port
+ * (`:80` on `http:`, `:443` on `https:`) compares equal to the same origin
+ * written without a port. Falls back to the raw value if it does not parse
+ * as a URL (in which case it will simply fail the exact-match comparison).
+ */
+function normalizeOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    const isDefaultPort =
+      (url.protocol === "http:" && (url.port === "" || url.port === "80")) ||
+      (url.protocol === "https:" && (url.port === "" || url.port === "443"));
+
+    return `${url.protocol}//${isDefaultPort ? url.hostname : url.host}`;
+  } catch {
+    return origin;
+  }
+}
+
 /** Same-origin, or an explicit entry in `auth.csrf.allowedOrigins` (default `[]`). */
 function isAllowedOrigin(origin: string, request: Request): boolean {
-  if (origin === ownOrigin(request)) return true;
+  if (normalizeOrigin(origin) === normalizeOrigin(ownOrigin(request))) return true;
 
   return authConfig.csrf.allowedOrigins().includes(origin);
 }

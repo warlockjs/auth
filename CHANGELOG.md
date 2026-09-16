@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - **CSRF Origin check for cookie-authenticated writes.** `authMiddleware` now automatically rejects, with `403` (`AuthErrorCodes.CsrfOriginMismatch`, `"EC006"`), any request whose credential came from a `cookie:` source and whose method is unsafe (`POST`/`PUT`/`PATCH`/`DELETE`) unless `Origin` (or, absent that, `Referer`) names the request's own origin or an entry in the new `auth.csrf.allowedOrigins` config (default `[]`). A request with neither header is rejected, fail-closed. Header-token authentication and safe methods (`GET`/`HEAD`/`OPTIONS`) are completely unaffected. This closes the residual CSRF gap `SameSite=Lax` alone leaves open for cookie auth (a same-site GET redirect chain, or a client that ignores `SameSite`); a double-submit token mechanism is deferred to a later release.
+- The CSRF Origin check's own-origin comparison includes the request's port (read from the `Host` header, since core's `request.hostname` never carries one), with default ports (`:80` on `http`, `:443` on `https`) normalised as equivalent to no port. A same-origin cookie-authenticated write on a non-default port — e.g. every `warlock dev` session — is now correctly allowed instead of being rejected with `403 EC006`.
 
 ### Changed
 
