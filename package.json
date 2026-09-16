@@ -30,7 +30,9 @@
     "@warlock.js/seal": "workspace:^",
     "mongodb": "^7.2.0",
     "pg": "^8.21.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "jose": "^6.1.0",
+    "@simplewebauthn/server": "^13.1.0"
   },
   "peerDependencies": {
     "@warlock.js/fs": "*",
