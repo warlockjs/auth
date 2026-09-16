@@ -16,12 +16,33 @@
  * `@warlock.js/core` is mocked the same way `auth.middleware.spec.ts` mocks
  * it (`config`/`t` stubbed identically) so `authMiddleware` behaves exactly
  * as it does in that suite — EXCEPT `Request`, `requestContext`, and
- * `useCurrentUser` are re-exported straight from core's own source inside
- * this same mock, rather than stubbed, because this spec needs the REAL
- * per-request `locals` field and the REAL `AsyncLocalStorage`-backed store —
- * a mock of either would prove nothing about isolation. Both `auth.middleware.ts`
- * and this spec resolve "@warlock.js/core" to this one mocked module, so
- * there is exactly one `config`/`useCurrentUser` in play, not two.
+ * `useCurrentUser` are taken from core's REAL implementation rather than
+ * stubbed, because this spec needs the REAL per-request `locals` field and
+ * the REAL `AsyncLocalStorage`-backed store — a mock of either would prove
+ * nothing about isolation.
+ *
+ * They are fetched via `@warlock.js/core`'s own PACKAGE-SPECIFIER deep
+ * paths (`@warlock.js/core/src/http/request`, not a `../../../core/src/...`
+ * relative crossing) so tsc resolves them the same way it resolves every
+ * other `@warlock.js/core` import in this package: through `node_modules`,
+ * which keeps them OUT of auth's own compiled program (a relative crossing
+ * into a sibling package's `src` makes tsc treat those files as auth's own
+ * source and charge their `rootDir` violations to auth — see
+ * `builder/scripts/strictness-gate.ts`'s `PROGRAM_CONTAINMENT_CODES`).
+ *
+ * This also deliberately avoids `importOriginal()` on the bare
+ * `@warlock.js/core` specifier: that forces evaluation of the FULL real
+ * barrel, including `core/src/database/utils.ts`, which imports
+ * `@warlock.js/auth` back — a genuine core→auth cycle. Loading it mid-mock
+ * caches `auth.middleware.ts` (transitively re-exported from
+ * `@warlock.js/auth`'s own index) with whatever `@warlock.js/core` binding
+ * was live at that moment, which is NOT this file's mock — the exact
+ * "two `config`s in play" bug this spec exists to prevent, just relocated
+ * to the test's own plumbing. The deep-path imports below only ever pull in
+ * `request.ts` and `request-context.ts` and their own dependencies, never
+ * `./database`, so the cycle is never entered. Both `auth.middleware.ts`
+ * and this spec still resolve "@warlock.js/core" to this one mocked
+ * module, so there is exactly one `config`/`useCurrentUser` in play.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,9 +51,9 @@ const jwtVerify = vi.fn();
 const accessTokenFindByToken = vi.fn();
 
 vi.mock("@warlock.js/core", async () => {
-  const { Request } = await import("../../../core/src/http/request");
+  const { Request } = await import("@warlock.js/core/src/http/request");
   const { requestContext, useCurrentUser, useRequest } = await import(
-    "../../../core/src/http/context/request-context"
+    "@warlock.js/core/src/http/context/request-context"
   );
 
   return {
