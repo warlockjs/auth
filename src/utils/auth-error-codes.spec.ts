@@ -14,6 +14,8 @@ describe("AuthErrorCodes", () => {
     expect(AuthErrorCodes.TooManyAttempts).toBe("EC004");
     expect(AuthErrorCodes.InvalidTokenType).toBe("EC005");
     expect(AuthErrorCodes.CsrfOriginMismatch).toBe("EC006");
+    expect(AuthErrorCodes.EmailNotVerified).toBe("EC007");
+    expect(AuthErrorCodes.InvalidOneTimeToken).toBe("EC008");
   });
 
   it("keeps every code unique", () => {

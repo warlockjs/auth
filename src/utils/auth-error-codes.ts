@@ -37,4 +37,17 @@ export enum AuthErrorCodes {
    * request carried neither header at all.
    */
   CsrfOriginMismatch = "EC006", // Error Code 006
+  /**
+   * Email Not Verified Error Code EC007
+   * EC007 = the authenticated user has not verified their email address —
+   * thrown by `requireVerifiedEmail()` as `EmailNotVerifiedError` (403).
+   */
+  EmailNotVerified = "EC007", // Error Code 007
+  /**
+   * Invalid One-Time Token Error Code EC008
+   * EC008 = an email-verification or password-reset token that is unknown,
+   * issued for the other purpose, expired, or already used. One code for all
+   * four on purpose: the caller learns nothing about which it was.
+   */
+  InvalidOneTimeToken = "EC008", // Error Code 008
 }

@@ -87,22 +87,20 @@ Without this, `JSON.stringify(user)` in your response leaks the hash.
 
 ## Email verification flow (extending registration)
 
-Common pattern: create the user as `email_verified = false`, send a verification email, mark verified on click. The auth package doesn't ship this; build it on top:
+Since 5.13 auth ships this. Declare `emailVerifiedAt: v.date().optional()` on the schema, then send the verification after creating the user:
 
 ```ts
-const user = await User.create({
-  ...data,
-  email_verified: false,
-  verification_token: Random.string(64),
-});
+import { authService, sendEmailVerification } from "@warlock.js/auth";
 
-await mailer.sendVerificationEmail(user.get("email"), user.get("verification_token"));
+const user = await User.create({ ...data, password: await hashPassword(data.password) });
+
+await sendEmailVerification(user); // hashed, single-use, 24h token via @warlock.js/notifications
 
 const tokens = await authService.createTokenPair(user);
 return response.successCreate({ user, tokens });
 ```
 
-Optional: pre-verification, restrict the user to a `unverified` user-type and gate routes accordingly via `authMiddleware("user")`. After verification, swap user-type to `user`.
+Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See [`@warlock.js/auth/verify-email-and-reset-password/SKILL.md`](@warlock.js/auth/verify-email-and-reset-password/SKILL.md).
 
 ## Side effects via auth events
 

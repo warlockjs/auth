@@ -56,6 +56,7 @@ Task-focused guides live under [`skills/`](./skills):
 - **customize-user-type** — multiple user types in one system
 - **customize-token-storage** — override the token models (multi-tenant columns, custom storage)
 - **throttle-login-attempts** — brute-force protection via `loginThrottleMiddleware`
+- **verify-email-and-reset-password** — email verification, password reset, `requireVerifiedEmail`
 - **run-auth-commands** — the bundled CLI commands
 
 ## Generate the JWT secret

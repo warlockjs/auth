@@ -2,7 +2,13 @@ import { config } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
 import { type Algorithm } from "fast-jwt";
 import ms from "ms";
-import type { CanAuthenticate, LogoutWithoutTokenBehavior } from "../contracts/types";
+import type {
+  AuthNotification,
+  CanAuthenticate,
+  LogoutWithoutTokenBehavior,
+  OneTimeTokenUrlBuilder,
+  PasswordSetter,
+} from "../contracts/types";
 import type { Auth } from "../models/auth.model";
 
 const warnedLegacyKeys = new Set<string>();
@@ -56,6 +62,12 @@ function parseDuration(key: string, raw: unknown): number {
 
   return parsed;
 }
+
+/** Email-verification token lifetime used when nothing is configured. */
+const DEFAULT_VERIFICATION_EXPIRES_IN = "24h";
+
+/** Password-reset token lifetime used when nothing is configured. */
+const DEFAULT_PASSWORD_RESET_EXPIRES_IN = "60m";
 
 /** Access-token lifetime used when nothing is configured. */
 const DEFAULT_ACCESS_TOKEN_EXPIRES_IN = "1h";
@@ -159,6 +171,38 @@ export const authConfig = {
      * beyond the request's own origin. @default []
      */
     allowedOrigins: (): string[] => config.key("auth.csrf.allowedOrigins", []),
+  },
+  verification: {
+    /** Lifetime in ms of an email-verification token; throws naming the key when unusable. @default "24h" */
+    expiresInMs: (): number =>
+      parseDuration(
+        "verification.expiresIn",
+        config.key("auth.verification.expiresIn", DEFAULT_VERIFICATION_EXPIRES_IN),
+      ),
+    /** User attribute stamped with the verification date. @default "emailVerifiedAt" */
+    field: (): string => config.key("auth.verification.field", "emailVerifiedAt"),
+    /** App notification replacing the default verification email. */
+    notification: (): AuthNotification | undefined =>
+      config.key("auth.verification.notification"),
+    /** Link builder whose result is handed to the notification as `url`. */
+    url: (): OneTimeTokenUrlBuilder | undefined => config.key("auth.verification.url"),
+  },
+  passwordReset: {
+    /** Lifetime in ms of a password-reset token; throws naming the key when unusable. @default "60m" */
+    expiresInMs: (): number =>
+      parseDuration(
+        "passwordReset.expiresIn",
+        config.key("auth.passwordReset.expiresIn", DEFAULT_PASSWORD_RESET_EXPIRES_IN),
+      ),
+    /** User attribute `requestPasswordReset` looks the account up by. @default "email" */
+    identifierField: (): string => config.key("auth.passwordReset.identifierField", "email"),
+    /** App notification replacing the default reset email. */
+    notification: (): AuthNotification | undefined =>
+      config.key("auth.passwordReset.notification"),
+    /** Link builder whose result is handed to the notification as `url`. */
+    url: (): OneTimeTokenUrlBuilder | undefined => config.key("auth.passwordReset.url"),
+    /** App-owned password writer replacing the default. */
+    setPassword: (): PasswordSetter | undefined => config.key("auth.passwordReset.setPassword"),
   },
   refreshToken: {
     /** Separate refresh secret (legacy: `auth.jwt.refresh.secret`); empty ⇒ fall back to the access secret. */

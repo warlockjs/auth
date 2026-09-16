@@ -4,6 +4,17 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.13.0
+
+### Added
+
+- **Email verification and password reset.** `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)` and `resetPassword(token, newPassword)`. Tokens are 32 random bytes, stored only as a SHA-256 hash, single-use (consumed with a conditional update, so of two concurrent uses exactly one succeeds), expiring (`auth.verification.expiresIn` default `"24h"`, `auth.passwordReset.expiresIn` default `"60m"`) and purpose-bound. A new reset request invalidates the user's earlier unused reset tokens. `requestPasswordReset` answers the same for unknown emails. `resetPassword` revokes every access token, refresh token and cookie session through `authService.revokeAllTokens`. Rejected tokens throw `InvalidOneTimeTokenError` (`400`, `EC008`).
+- New `one_time_tokens` table (`OneTimeToken` model, overridable via `auth.oneTimeToken.model`), shipped in `authMigrations`. **Run your migrations.**
+- Delivery goes through `@warlock.js/notifications`, now an **optional peer dependency**. Default mail notifications can be replaced via `auth.verification.notification` / `auth.passwordReset.notification`, and link builders set via `.url`. If the package is not installed or not configured, calls throw `NotificationsUnavailableError` before any token is issued.
+- `requireVerifiedEmail()` middleware — rejects users without `auth.verification.field` (default `emailVerifiedAt`) with `EmailNotVerifiedError` (`403`, `EC007`). `isEmailVerified(user)` helper.
+- `tokenIssueThrottleMiddleware()` (every request counts, per email + IP, 3/1h) and `tokenConsumeThrottleMiddleware()` (failures, per IP, 10/15m), both built on `loginThrottleMiddleware`.
+- `AuthErrorCodes.EmailNotVerified` (`"EC007"`) and `AuthErrorCodes.InvalidOneTimeToken` (`"EC008"`).
+
 ## 5.12.0 - 2026-09-16
 
 ### Added

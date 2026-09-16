@@ -38,7 +38,13 @@
     "@warlock.js/cascade": "*",
     "@warlock.js/core": "*",
     "@warlock.js/logger": "*",
-    "@warlock.js/seal": "*"
+    "@warlock.js/seal": "*",
+    "@warlock.js/notifications": "*"
+  },
+  "peerDependenciesMeta": {
+    "@warlock.js/notifications": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",

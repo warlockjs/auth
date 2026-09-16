@@ -2,6 +2,7 @@ import { type ChildModel } from "@warlock.js/cascade";
 import { type Algorithm } from "fast-jwt";
 import type { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
+import type { OneTimeToken } from "../models/one-time-token";
 import type { RefreshToken } from "../models/refresh-token";
 
 /**
@@ -164,6 +165,88 @@ export type PageAuthConfig = {
   returnUrlParam?: string;
 };
 
+/**
+ * Data every email-verification / password-reset notification receives.
+ */
+export type OneTimeTokenNotificationData = {
+  /** The raw token — the only place it exists; only its SHA-256 hash is stored. */
+  token: string;
+  /** When the token stops working. */
+  expiresAt: Date;
+  /** The link built by `auth.verification.url` / `auth.passwordReset.url`, when configured. */
+  url?: string;
+};
+
+/**
+ * Anything auth can deliver a token through — a `defineNotification(...)`
+ * result satisfies it, as does any object with a compatible `send`.
+ */
+export type AuthNotification = {
+  send: (to: Auth, data: OneTimeTokenNotificationData) => unknown;
+};
+
+/** Builds the link a token notification points at. */
+export type OneTimeTokenUrlBuilder = (token: string, user: Auth) => string;
+
+/** Persists a new plaintext password for a user during a password reset. */
+export type PasswordSetter = (user: Auth, plainPassword: string) => void | Promise<void>;
+
+/**
+ * Email-verification configuration (`auth.verification`).
+ */
+export type EmailVerificationConfig = {
+  /**
+   * Token lifetime — a positive `ms` duration string.
+   * @default "24h"
+   */
+  expiresIn?: string;
+  /**
+   * User attribute stamped with the verification `Date`. Declare it in the
+   * user schema (e.g. `emailVerifiedAt: v.date().optional()`).
+   * @default "emailVerifiedAt"
+   */
+  field?: string;
+  /** Replace the default verification email. */
+  notification?: AuthNotification;
+  /** Build the verification link passed to the notification as `url`. */
+  url?: OneTimeTokenUrlBuilder;
+};
+
+/**
+ * Password-reset configuration (`auth.passwordReset`).
+ */
+export type PasswordResetConfig = {
+  /**
+   * Token lifetime — a positive `ms` duration string.
+   * @default "60m"
+   */
+  expiresIn?: string;
+  /**
+   * User attribute `requestPasswordReset` looks the account up by.
+   * @default "email"
+   */
+  identifierField?: string;
+  /** Replace the default reset email. */
+  notification?: AuthNotification;
+  /** Build the reset link passed to the notification as `url`. */
+  url?: OneTimeTokenUrlBuilder;
+  /**
+   * Persist the new password yourself. By default auth saves a hash made by
+   * the same `hashPassword` login verifies against, and falls back to the
+   * plaintext when the model hashes on save (`useHashedPassword()`), checking
+   * the stored value with `verifyPassword` either way.
+   */
+  setPassword?: PasswordSetter;
+};
+
+/**
+ * One-time token storage configuration (`auth.oneTimeToken`).
+ */
+export type OneTimeTokenConfig = {
+  /** Override the persisted model — extend {@link OneTimeToken}. */
+  model?: typeof OneTimeToken;
+};
+
 export type AuthConfigurations = {
   /**
    * Define all user types — maps a user-type slug to its `Auth` model class so
@@ -201,6 +284,18 @@ export type AuthConfigurations = {
    * CSRF Origin-check config for cookie-authenticated unsafe-method requests.
    */
   csrf?: CsrfConfig;
+  /**
+   * Email verification — token lifetime, verified field, notification override.
+   */
+  verification?: EmailVerificationConfig;
+  /**
+   * Password reset — token lifetime, lookup field, notification and password-writer overrides.
+   */
+  passwordReset?: PasswordResetConfig;
+  /**
+   * One-time token (verification / reset) storage — model override.
+   */
+  oneTimeToken?: OneTimeTokenConfig;
   /**
    * @deprecated Use `accessToken` / `refreshToken`. Read via a backward-compatible shim.
    */
