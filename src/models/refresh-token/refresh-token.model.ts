@@ -51,6 +51,14 @@ export class RefreshToken extends Model {
 
   public static schema = refreshTokenSchema;
 
+  /**
+   * Permanent regardless of the data source default — Mongo's driver default
+   * is `"trash"`, which would copy live credential material (the JWT itself)
+   * into `refresh_tokensTrash` on every `destroy()` (expiry purge,
+   * never-expiring purge). A purged refresh token must not survive anywhere.
+   */
+  public static deleteStrategy = "permanent" as const;
+
   /** Token family this row belongs to (rotation / replay grouping). */
   public get familyId(): string {
     return this.get("family_id");

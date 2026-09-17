@@ -33,6 +33,15 @@ export class AccessToken extends Model {
 
   public static schema = accessTokenSchema;
 
+  /**
+   * Permanent regardless of the data source default — Mongo's driver default
+   * is `"trash"`, which would copy live credential material (the JWT itself)
+   * into `access_tokensTrash` on every `destroy()` (logout, expiry purge,
+   * never-expiring purge). A revoked/expired access token must not survive
+   * anywhere.
+   */
+  public static deleteStrategy = "permanent" as const;
+
   /** The user this token was issued for. */
   public get userId() {
     return this.get("user_id");

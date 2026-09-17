@@ -4,7 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { InvalidOneTimeTokenError } from "../../../src/errors/invalid-one-time-token.error";
 import { InvalidPasskeyError } from "../../../src/errors/invalid-passkey.error";
 import { authMigrations } from "../../../src/models";
+import { AccessToken } from "../../../src/models/access-token/access-token.model";
 import { OneTimeToken } from "../../../src/models/one-time-token/one-time-token.model";
+import { RefreshToken } from "../../../src/models/refresh-token/refresh-token.model";
 import { PasskeyCredential } from "../../../src/models/passkey-credential/passkey-credential.model";
 import { ProviderAccount } from "../../../src/models/provider-account/provider-account.model";
 import { requestOtp, verifyOtp } from "../../../src/otp/otp";
@@ -69,6 +71,8 @@ const TABLES = [
 
 /** Where cascade's Mongo default "trash" delete strategy would move destroyed rows. */
 const MONGO_TRASH = "one_time_tokensTrash";
+const MONGO_ACCESS_TOKEN_TRASH = "access_tokensTrash";
+const MONGO_REFRESH_TOKEN_TRASH = "refresh_tokensTrash";
 
 const ORIGIN = "https://app.test";
 const RP_ID = "app.test";
@@ -106,7 +110,7 @@ export function defineAuthHardeningSuite(label: string, options: HardeningSuiteO
       await harness.truncate(TABLES);
 
       if (harness.label === "mongodb") {
-        await harness.truncate([MONGO_TRASH]);
+        await harness.truncate([MONGO_TRASH, MONGO_ACCESS_TOKEN_TRASH, MONGO_REFRESH_TOKEN_TRASH]);
       }
 
       sentCodes.length = 0;
@@ -305,6 +309,42 @@ export function defineAuthHardeningSuite(label: string, options: HardeningSuiteO
 
       await expect(consumeOneTimeToken(live.token, "email-verification")).resolves.toBeTruthy();
       expect(await OneTimeToken.purgeSpent()).toBe(1);
+    });
+
+    it("auth.cleanup purges expired access and refresh tokens without copying them into trash collections", async () => {
+      const user = await ItestUser.create({ email: "ada@example.com" });
+
+      await AccessToken.issue(user as never, "expired-access-token", new Date(Date.now() - 60_000));
+      const liveAccessToken = await AccessToken.issue(
+        user as never,
+        "live-access-token",
+        new Date(Date.now() + 60_000),
+      );
+
+      await RefreshToken.issue(user as never, "expired-refresh-token", {
+        familyId: "family-1",
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      });
+      const liveRefreshToken = await RefreshToken.issue(user as never, "live-refresh-token", {
+        familyId: "family-2",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      await authService.cleanupExpiredTokens();
+
+      const remainingAccessTokens = await harness.rows("access_tokens");
+      const remainingRefreshTokens = await harness.rows("refresh_tokens");
+
+      expect(remainingAccessTokens).toHaveLength(1);
+      expect(remainingAccessTokens[0].token).toBe(liveAccessToken.get("token"));
+      expect(remainingRefreshTokens).toHaveLength(1);
+      expect(remainingRefreshTokens[0].token).toBe(liveRefreshToken.get("token"));
+
+      // A purge is a hard delete: credential material is not copied into a trash table.
+      if (harness.label === "mongodb") {
+        expect(await harness.rows(MONGO_ACCESS_TOKEN_TRASH)).toHaveLength(0);
+        expect(await harness.rows(MONGO_REFRESH_TOKEN_TRASH)).toHaveLength(0);
+      }
     });
   });
 }

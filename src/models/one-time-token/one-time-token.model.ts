@@ -40,6 +40,14 @@ export class OneTimeToken extends Model {
 
   public static schema = oneTimeTokenSchema;
 
+  /**
+   * Permanent regardless of the data source default — Mongo's driver default
+   * is `"trash"`, which would copy spent token hashes into
+   * `one_time_tokensTrash` on every `destroy()`. A purged one-time token must
+   * not survive anywhere.
+   */
+  public static deleteStrategy = "permanent" as const;
+
   /** The user this token was issued for. */
   public get userId() {
     return this.get("user_id");
@@ -160,9 +168,9 @@ export class OneTimeToken extends Model {
     const spent = new Map([...expired, ...consumed].map((token) => [String(token.id), token]));
 
     for (const token of spent.values()) {
-      // Permanent regardless of the driver default (Mongo's is "trash"): a
-      // purge must not leave copies of the rows behind.
-      await token.destroy({ strategy: "permanent" });
+      // `static deleteStrategy` above already forces "permanent" regardless
+      // of the data source default (Mongo's is "trash").
+      await token.destroy();
     }
 
     return spent.size;

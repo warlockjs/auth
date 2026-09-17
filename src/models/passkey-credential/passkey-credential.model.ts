@@ -22,6 +22,14 @@ export class PasskeyCredential extends Model {
 
   public static schema = passkeyCredentialSchema;
 
+  /**
+   * Permanent regardless of the data source default — Mongo's driver default
+   * is `"trash"`. No call site deletes a credential today, but the public key
+   * is credential material, so a future `destroy()` here must not leave a
+   * copy in `passkey_credentialsTrash`.
+   */
+  public static deleteStrategy = "permanent" as const;
+
   /** base64url credential id. */
   public get credentialId(): string {
     return this.get("credential_id");

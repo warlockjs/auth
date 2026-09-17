@@ -125,6 +125,11 @@ const cleaned = await authService.cleanupExpiredTokens();
 // Fires "token.expired" event per token + "cleanup.completed" with the count.
 ```
 
+Every purge is a hard delete on every driver, including MongoDB. `AccessToken`, `RefreshToken`,
+`OneTimeToken` and `PasskeyCredential` all declare `static deleteStrategy = "permanent"`, so a
+purge never copies credential material into a `*Trash` collection despite MongoDB's driver
+default being `"trash"`.
+
 Run this periodically via the scheduler:
 
 ```ts

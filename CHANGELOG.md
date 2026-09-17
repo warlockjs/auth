@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Passkey specs now also run the real `@simplewebauthn/server` against a `node:crypto` software authenticator (`none` attestation, ES256 assertions).
 - `AuthErrorCodes.InvalidProviderCallback` (`"EC009"`), `AuthErrorCodes.ProviderEmailNotVerified` (`"EC010"`) and `AuthErrorCodes.InvalidPasskey` (`"EC011"`).
 
+### Security
+
+- **Access and refresh tokens (and one-time tokens, and passkey credentials) are no longer copied into MongoDB trash collections on delete.** `AccessToken`, `RefreshToken`, `OneTimeToken` and `PasskeyCredential` now declare `static deleteStrategy = "permanent"`, overriding the MongoDB driver's default `"trash"` strategy. Previously, `AccessToken.purgeExpired()`, `RefreshToken.purgeExpired()`/`purgeNeverExpiring()`, and `authMiddleware`'s expired-token cleanup all called `destroy()` without a strategy override, so on MongoDB every purge or invalidation copied the live JWT into `access_tokensTrash` / `refresh_tokensTrash` before deleting the original — leaving usable credential material behind after "revocation". `OneTimeToken.purgeSpent()` already forced `"permanent"` per-call (5.13.0 above); that override is now redundant and has been removed in favor of the model-level default. Apps that have been running on MongoDB may want to drop the `access_tokensTrash`, `refresh_tokensTrash` and `one_time_tokensTrash` collections, which may hold copies of now-revoked credentials.
+
 ### Fixed
 
 - `verifyPasskeyAuthentication` reported a cloned authenticator as `reason: "authentication-verification-failed"`, because `@simplewebauthn/server` rejects a non-advancing counter itself before auth's own check runs. It now reports `"counter-regression"`. The response (`400`, `EC011`) is unchanged.
