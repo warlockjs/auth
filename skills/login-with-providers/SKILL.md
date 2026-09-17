@@ -143,8 +143,9 @@ router.post("/auth/otp/verify", async ({ request, response }) => {
 
 - `completeProviderLogin` needs the **same** response object to clear the state cookie. Do not pass a different one.
 - One provider identity links to one account, of one user type.
-- `auth.cleanup` does not purge `one_time_tokens` (including challenges and codes) yet.
-- The workspace specs mock `@simplewebauthn/server` and Google's token endpoint. Test a real authenticator and a real Google client before you ship.
+- `auth.cleanup` hard-deletes expired and consumed `one_time_tokens` rows (challenges and codes included).
+- The passkey specs run the real `@simplewebauthn/server` against a software ES256 authenticator, and the consume-once, OTP attempt cap, counter compare-and-set and provider-link uniqueness are proven on real MongoDB and Postgres. Google's token endpoint is still mocked, so test a real Google client before you ship.
+- A counter the SDK rejects is reported with `reason: "counter-regression"`, the same as auth's own check.
 
 ## See also
 

@@ -16,8 +16,9 @@ vi.mock(
 );
 vi.mock("@warlock.js/logger", () => ({ log: { warn: vi.fn(), error: vi.fn() } }));
 
-// `@simplewebauthn/server` is not installed in this workspace: the SDK boundary
-// is mocked. What these specs prove is auth's own logic around it.
+// The SDK boundary is mocked so each branch of auth's own logic (counter
+// values, verification outcomes) is driven directly. The real library is
+// exercised end to end in passkeys.real-sdk.spec.ts.
 const webauthn = vi.hoisted(() => ({
   generateRegistrationOptions: vi.fn(),
   verifyRegistrationResponse: vi.fn(),

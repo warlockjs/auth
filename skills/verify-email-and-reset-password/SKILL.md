@@ -128,7 +128,7 @@ The default notifications are `defineNotification` objects (`type: "auth.email-v
 - **Without `url` config, the email contains the raw token**, not a link. Set `url` for anything user-facing.
 - **Timing isn't equalised.** An unknown email skips the database write and the send, so the response can come back measurably faster. The throttle limits probing, but it doesn't hide the timing difference.
 - **Channel send failures don't throw.** `@warlock.js/notifications` only rethrows configuration errors (such as a missing `mail` channel). An SMTP failure goes to its `failed` event, so observe it there.
-- `auth.cleanup` does not purge `one_time_tokens` yet. Expired rows are harmless but accumulate.
+- `auth.cleanup` hard-deletes expired and consumed `one_time_tokens` rows (never trashed, even on MongoDB).
 
 ## See also
 

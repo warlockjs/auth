@@ -120,7 +120,8 @@ When issuing a new refresh token, the service counts active tokens for the user 
 
 ```ts
 const cleaned = await authService.cleanupExpiredTokens();
-// Returns: number of expired refresh tokens removed (also purges expired access-token rows).
+// Returns: number of expired refresh tokens removed (also purges expired access-token rows
+// and hard-deletes expired or consumed one_time_tokens rows).
 // Fires "token.expired" event per token + "cleanup.completed" with the count.
 ```
 

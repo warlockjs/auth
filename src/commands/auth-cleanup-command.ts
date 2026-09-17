@@ -13,7 +13,7 @@ import { authService } from "../services/auth.service";
 export function registerAuthCleanupCommand() {
   return command({
     name: "auth.cleanup",
-    description: "Remove expired refresh tokens from the database",
+    description: "Remove expired access/refresh tokens and spent one-time tokens from the database",
     preload: {
       env: true,
       config: ["auth", "database"],

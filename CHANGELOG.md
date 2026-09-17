@@ -21,7 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Phone OTP:** `requestOtp(Model, phone, { channel })` / `verifyOtp(Model, phone, code)`. Codes have 6 digits, are stored as a salted HMAC in `one_time_tokens` (purpose `otp`), expire after 5 minutes, and are invalidated after 5 attempts (counted atomically). Unknown phones get the same answer. Codes are delivered through the `@warlock.js/notifications` channel you configure (`auth.otp.channel`, default `"sms"`) or `auth.otp.send`; auth ships no SMS/WhatsApp driver. New `otpRequestThrottleMiddleware()` / `otpVerifyThrottleMiddleware()` presets are built on `loginThrottleMiddleware`.
   - `jose` and `@simplewebauthn/server` are new **optional peer dependencies**, loaded lazily. When one is missing, the call throws `AuthProviderSdkMissingError`, whose message names `warlock add auth-google` / `warlock add auth-passkeys`.
 - `one_time_tokens` gains an `attempts` column, and `user_id` becomes nullable (passkey login challenges have no user yet). `authMigrations` now includes `ProviderAccountMigration` and `PasskeyCredentialMigration`. **Run your migrations.**
+- `auth.cleanup` / `authService.cleanupExpiredTokens()` also hard-deletes expired and consumed `one_time_tokens` rows via the new `OneTimeToken.purgeSpent()`. The delete is permanent on every driver, so MongoDB's default "trash" strategy does not copy token hashes into `one_time_tokensTrash`.
+- Local real-database integration suites (`tests/integration/local`, skipped unless `LOCAL_MONGO_*` / `LOCAL_PG_*` are set) prove on MongoDB and Postgres: a one-time token consumed 20 times concurrently succeeds once, 20 concurrent wrong OTP guesses count at most 5 attempts and invalidate the code, a passkey login challenge with no user persists and is consumed, the counter compare-and-set and regression rejection hold, and `provider_accounts` allows one link per identity.
+- Passkey specs now also run the real `@simplewebauthn/server` against a `node:crypto` software authenticator (`none` attestation, ES256 assertions).
 - `AuthErrorCodes.InvalidProviderCallback` (`"EC009"`), `AuthErrorCodes.ProviderEmailNotVerified` (`"EC010"`) and `AuthErrorCodes.InvalidPasskey` (`"EC011"`).
+
+### Fixed
+
+- `verifyPasskeyAuthentication` reported a cloned authenticator as `reason: "authentication-verification-failed"`, because `@simplewebauthn/server` rejects a non-advancing counter itself before auth's own check runs. It now reports `"counter-regression"`. The response (`400`, `EC011`) is unchanged.
 
 ## 5.12.0 - 2026-09-16
 

@@ -17,6 +17,27 @@ import {
   type PasskeyResponseJSON,
 } from "./simplewebauthn";
 
+/** A counter that did not advance past the stored one (when either is non-zero): a cloned authenticator. */
+function counterRegressed(stored: number, presented: number | undefined): boolean {
+  if (presented === undefined) return false;
+
+  return (stored > 0 || presented > 0) && !(presented > stored);
+}
+
+/**
+ * The signature counter an assertion CLAIMS (bytes 33–36 of authenticatorData).
+ * Unverified — only used to label a rejection the SDK already made.
+ */
+function presentedCounter(credential: PasskeyResponseJSON): number | undefined {
+  const encoded = credential.response.authenticatorData;
+
+  if (typeof encoded !== "string") return undefined;
+
+  const authData = Buffer.from(encoded, "base64url");
+
+  return authData.length >= 37 ? authData.readUInt32BE(33) : undefined;
+}
+
 /**
  * Authentication options for a passkey login. No user is identified yet
  * (discoverable credentials), so the stored single-use challenge has no owner;
@@ -87,7 +108,13 @@ export async function verifyPasskeyAuthentication(
       requireUserVerification: false,
     });
   } catch (error) {
-    throw new InvalidPasskeyError("authentication-verification-failed", error);
+    // The SDK enforces the counter rule itself and throws a generic Error for
+    // it; keep clone detection visible as its own reason in the logs.
+    const reason = counterRegressed(stored.counter, presentedCounter(credential))
+      ? "counter-regression"
+      : "authentication-verification-failed";
+
+    throw new InvalidPasskeyError(reason, error);
   }
 
   if (!verification.verified) {
@@ -97,7 +124,7 @@ export async function verifyPasskeyAuthentication(
   const previous = stored.counter;
   const next = Number(verification.authenticationInfo.newCounter);
 
-  if ((previous > 0 || next > 0) && !(next > previous)) {
+  if (counterRegressed(previous, next)) {
     throw new InvalidPasskeyError("counter-regression");
   }
 

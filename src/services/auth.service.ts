@@ -18,6 +18,7 @@ import type {
 } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
+import { OneTimeToken } from "../models/one-time-token";
 import { RefreshToken } from "../models/refresh-token";
 import { authConfig } from "./auth-config";
 import { authEvents } from "./auth-events";
@@ -39,6 +40,13 @@ class AuthService {
    */
   private get refreshTokenModel(): typeof RefreshToken {
     return config.key("auth.refreshToken.model", RefreshToken);
+  }
+
+  /**
+   * Resolve the active one-time-token model (default or registered override).
+   */
+  private get oneTimeTokenModel(): typeof OneTimeToken {
+    return config.key("auth.oneTimeToken.model", OneTimeToken);
   }
 
   /**
@@ -432,7 +440,8 @@ class AuthService {
   }
 
   /**
-   * Delete expired tokens (refresh + access). Emits `token.expired` per refresh
+   * Delete expired tokens (refresh + access) and spent one-time tokens
+   * (expired or consumed verification/reset/OTP/passkey rows). Emits `token.expired` per refresh
    * token and `cleanup.completed` with the refresh count. Drives the
    * `auth.cleanup` CLI command.
    */
@@ -444,6 +453,7 @@ class AuthService {
     }
 
     await this.accessTokenModel.purgeExpired();
+    await this.oneTimeTokenModel.purgeSpent();
 
     authEvents.emit("cleanup.completed", expiredTokens.length);
 

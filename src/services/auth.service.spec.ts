@@ -48,6 +48,15 @@ vi.mock("../models/refresh-token", () => ({
   },
 }));
 
+// ── one-time-token model ────────────────────────────────────────────────────
+const oneTimeTokenPurgeSpent = vi.fn();
+
+vi.mock("../models/one-time-token", () => ({
+  OneTimeToken: {
+    purgeSpent: (...args: unknown[]) => oneTimeTokenPurgeSpent(...args),
+  },
+}));
+
 // ── jwt service ─────────────────────────────────────────────────────────────
 const jwtGenerate = vi.fn();
 const jwtGenerateRefreshToken = vi.fn();
@@ -760,6 +769,17 @@ describe("authService.cleanupExpiredTokens", () => {
     expect(emit).toHaveBeenCalledWith("token.expired", rows[0]);
     expect(accessTokenPurgeExpired).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledWith("cleanup.completed", 2);
+  });
+
+  it("also purges expired and consumed one-time tokens", async () => {
+    refreshTokenPurgeExpired.mockResolvedValue([]);
+    accessTokenPurgeExpired.mockResolvedValue(0);
+    oneTimeTokenPurgeSpent.mockResolvedValue(4);
+
+    const count = await authService.cleanupExpiredTokens();
+
+    expect(oneTimeTokenPurgeSpent).toHaveBeenCalledOnce();
+    expect(count).toBe(0);
   });
 });
 

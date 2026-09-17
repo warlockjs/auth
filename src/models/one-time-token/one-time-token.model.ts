@@ -148,6 +148,26 @@ export class OneTimeToken extends Model {
     return counted > 0;
   }
 
+  /**
+   * Hard-delete every spent row — expired, or consumed (used, invalidated by a
+   * newer token, or exhausted). Neither can ever be redeemed again, so nothing
+   * reads them. Hard-deleted, never trashed. Returns the number removed. Runs from the `auth.cleanup` CLI
+   * command (a cold batch path).
+   */
+  public static async purgeSpent(): Promise<number> {
+    const expired = await this.query().where("expires_at", "<", new Date()).get();
+    const consumed = await this.query().whereNotNull("consumed_at").get();
+    const spent = new Map([...expired, ...consumed].map((token) => [String(token.id), token]));
+
+    for (const token of spent.values()) {
+      // Permanent regardless of the driver default (Mongo's is "trash"): a
+      // purge must not leave copies of the rows behind.
+      await token.destroy({ strategy: "permanent" });
+    }
+
+    return spent.size;
+  }
+
   /** Find a token by hash, scoped to a purpose — a token of the other purpose is not found. */
   public static findByHash(
     tokenHash: string,
