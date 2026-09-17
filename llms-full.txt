@@ -553,6 +553,164 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 - [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — where the access token gets consumed
 
 
+## login-with-providers  `@warlock.js/auth/login-with-providers/SKILL.md`
+
+---
+name: login-with-providers
+description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
+---
+
+# Login with Google, passkeys, or a phone code
+
+Services only, as with password login: you write the routes. Each `verify`/`complete` call returns the same `LoginResult` as `authService.login`, so the next step is the same too:
+
+```ts
+const { user, tokens } = await completeProviderLogin(User, "google", request, response);
+authService.setAuthCookie(response, tokens.accessToken); // cookie session, or return tokens as JSON
+```
+
+`authService.completeLogin(user, deviceInfo?)` is that shared ending. It applies `auth.canAuthenticate` (403) and issues tokens. Call it only for a user you have already authenticated.
+
+## Install
+
+| Method | Command | Installs |
+| --- | --- | --- |
+| Google | `warlock add auth-google` | `jose` |
+| Passkeys | `warlock add auth-passkeys` | `@simplewebauthn/server` (add `@simplewebauthn/browser` to your client bundle) |
+| Phone code | `warlock add notifications` + your own `sms`/`whatsapp` channel | nothing else. Auth ships no SMS/WhatsApp driver |
+
+The SDKs are optional peers, loaded with `import()` only when a method runs. If one is missing, the call throws `AuthProviderSdkMissingError` (500), and the message names the `warlock add` command. Run the migrations: `authMigrations` now includes `provider_accounts` and `passkey_credentials`, and `one_time_tokens` gained an `attempts` column.
+
+## Google
+
+```ts
+// src/config/auth.ts
+providers: {
+  google: {
+    clientId: env("GOOGLE_CLIENT_ID"),
+    clientSecret: env("GOOGLE_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/google/callback`, // exactly as registered at Google
+    // scopes: ["openid", "email", "profile"],
+  },
+  // emailField: "email",
+  // createUser: async (profile, Model) => Model.create({ ... }),
+},
+```
+
+```ts
+router.get("/auth/google", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "google")),
+);
+
+router.get("/auth/google/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "google", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+Client side, the button is just a link. It must be a top-level navigation, not a `fetch`, so the state cookie goes out and comes back:
+
+```tsx
+<a href="/auth/google">Continue with Google</a>
+```
+
+- `state`, `nonce` and the PKCE verifier go into a signed, 10-minute, HttpOnly `auth_provider_state` cookie (SameSite=Lax, so it survives Google's redirect back). The callback clears the cookie, so a started login can complete only once.
+- The callback rejects, with `InvalidProviderCallbackError` (400, `EC009`): a missing, forged or expired cookie, a `state` mismatch, a `?error=` from Google, a failed code exchange, and an id_token with a bad signature, `iss`, `aud`, `exp` or `nonce`. `error.reason` says which. The response message is generic.
+- **Linking.** An existing `provider_accounts` row (provider plus Google `sub`) always decides the user. Without one, the Google email must be verified (`email_verified: true`), or the call throws `ProviderEmailNotVerifiedError` (403, `EC010`) and nothing is linked or created. A verified email links the matching user, or creates one with `{ email, name, emailVerifiedAt: now }`.
+- Other OIDC providers: implement `AuthProvider` (`authorizationUrl(state)`, `handleCallback({ query, expected })`) and register it under `auth.providers.custom.<name>`.
+
+## Passkeys
+
+```ts
+passkeys: { rpID: "example.com", rpName: "Example", origin: "https://example.com" },
+```
+
+```ts
+// Register (logged in)
+router.post("/auth/passkeys/register/options", async ({ request, response }) =>
+  response.success(await generatePasskeyRegistrationOptions(request.locals.user)),
+  { middleware: [authMiddleware("user")] });
+router.post("/auth/passkeys/register", async ({ request, response }) => {
+  await verifyPasskeyRegistration(request, request.locals.user, request.input("credential"));
+  return response.success({ registered: true });
+}, { middleware: [authMiddleware("user")] });
+
+// Log in
+router.post("/auth/passkeys/login/options", async ({ response }) =>
+  response.success(await generatePasskeyAuthenticationOptions()));
+router.post("/auth/passkeys/login", async ({ request, response }) => {
+  const { tokens } = await verifyPasskeyAuthentication(request, request.input("credential"));
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.success({ ok: true });
+});
+```
+
+Browser:
+
+```ts
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+
+const post = (url: string, body?: unknown) =>
+  fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+    .then((r) => r.json());
+
+// register
+const regOptions = await post("/auth/passkeys/register/options");
+await post("/auth/passkeys/register", { credential: await startRegistration({ optionsJSON: regOptions }) });
+
+// log in
+const authOptions = await post("/auth/passkeys/login/options");
+await post("/auth/passkeys/login", { credential: await startAuthentication({ optionsJSON: authOptions }) });
+```
+
+(Unwrap `response.success`'s envelope if your app wraps payloads.)
+
+- Challenges live in `one_time_tokens` as SHA-256 hashes, expire after 5m (`auth.passkeys.challengeExpiresIn`), and are **consumed before verification**. A replayed challenge fails, and so does one whose first verification failed.
+- The request `Origin` must be one of `auth.passkeys.origin`. The same list is checked against the signed `clientDataJSON`.
+- The signature counter must advance. A counter that did not move past the stored value (when either is non-zero) is rejected as a cloned authenticator. The new counter is saved with a compare-and-set.
+- Every rejection throws `InvalidPasskeyError` (400, `EC011`) with a `reason`.
+
+## Phone code (OTP)
+
+```ts
+otp: { channel: "sms" /* or "whatsapp" */, phoneField: "phone", expiresIn: "5m", maxAttempts: 5 },
+```
+
+```ts
+router.post("/auth/otp/request", async ({ request, response }) => {
+  await requestOtp(User, request.input("phone"), { channel: request.input("via") === "whatsapp" ? "whatsapp" : "sms" });
+  return response.success({ message: "If that number is registered, a code is on its way." });
+}, { middleware: [otpRequestThrottleMiddleware()] }); // 3 / 1h per phone + IP
+
+router.post("/auth/otp/verify", async ({ request, response }) => {
+  const { tokens } = await verifyOtp(User, request.input("phone"), request.input("code"));
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.success({ ok: true });
+}, { middleware: [otpVerifyThrottleMiddleware()] }); // 5 failures / 15m per phone + IP
+```
+
+- Codes have 6 digits and are stored in `one_time_tokens` (purpose `otp`) as a salted HMAC keyed from your access-token secret, never as plain SHA-256, which is trivially reversible for 6 digits. A new request invalidates the previous code.
+- Every verify counts an attempt atomically first. After `maxAttempts` the code is invalidated, even if the right code comes next, and even under concurrent guesses.
+- Delivery: `notify.channel(channel).send(phone, { body, code, expiresAt })`. Register that channel in `config/notifications.ts`, or set `auth.otp.send(phone, message, channel)`. `auth.otp.message(code)` changes the text.
+- **Anti-enumeration:** an unknown phone gets the same `requestOtp` result (nothing sent) and the same `InvalidOneTimeTokenError` (400, `EC008`) from `verifyOtp`.
+- CSRF: `verifyOtp` is a POST. If the route uses cookie auth, the 5.12 Origin check applies. Otherwise there is no ambient credential to ride.
+
+## Gotchas
+
+- `completeProviderLogin` needs the **same** response object to clear the state cookie. Do not pass a different one.
+- One provider identity links to one account, of one user type.
+- `auth.cleanup` hard-deletes expired and consumed `one_time_tokens` rows (challenges and codes included).
+- The passkey specs run the real `@simplewebauthn/server` against a software ES256 authenticator, and the consume-once, OTP attempt cap, counter compare-and-set and provider-link uniqueness are proven on real MongoDB and Postgres. Google's token endpoint is still mocked, so test a real Google client before you ship.
+- A counter the SDK rejects is reported with `reason: "counter-regression"`, the same as auth's own check.
+
+## See also
+
+- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md): password login and `setAuthCookie`
+- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md): the throttle the OTP presets wrap
+- [`@warlock.js/notifications/define-channel/SKILL.md`](@warlock.js/notifications/define-channel/SKILL.md): an SMS/WhatsApp channel
+
+
 ## manage-tokens  `@warlock.js/auth/manage-tokens/SKILL.md`
 
 ---
@@ -677,9 +835,15 @@ When issuing a new refresh token, the service counts active tokens for the user 
 
 ```ts
 const cleaned = await authService.cleanupExpiredTokens();
-// Returns: number of expired refresh tokens removed (also purges expired access-token rows).
+// Returns: number of expired refresh tokens removed (also purges expired access-token rows
+// and hard-deletes expired or consumed one_time_tokens rows).
 // Fires "token.expired" event per token + "cleanup.completed" with the count.
 ```
+
+Every purge is a hard delete on every driver, including MongoDB. `AccessToken`, `RefreshToken`,
+`OneTimeToken` and `PasskeyCredential` all declare `static deleteStrategy = "permanent"`, so a
+purge never copies credential material into a `*Trash` collection despite MongoDB's driver
+default being `"trash"`.
 
 Run this periodically via the scheduler:
 
@@ -1156,22 +1320,20 @@ Without this, `JSON.stringify(user)` in your response leaks the hash.
 
 ## Email verification flow (extending registration)
 
-Common pattern: create the user as `email_verified = false`, send a verification email, mark verified on click. The auth package doesn't ship this; build it on top:
+Since 5.13 auth ships this. Declare `emailVerifiedAt: v.date().optional()` on the schema, then send the verification after creating the user:
 
 ```ts
-const user = await User.create({
-  ...data,
-  email_verified: false,
-  verification_token: Random.string(64),
-});
+import { authService, sendEmailVerification } from "@warlock.js/auth";
 
-await mailer.sendVerificationEmail(user.get("email"), user.get("verification_token"));
+const user = await User.create({ ...data, password: await hashPassword(data.password) });
+
+await sendEmailVerification(user); // hashed, single-use, 24h token via @warlock.js/notifications
 
 const tokens = await authService.createTokenPair(user);
 return response.successCreate({ user, tokens });
 ```
 
-Optional: pre-verification, restrict the user to a `unverified` user-type and gate routes accordingly via `authMiddleware("user")`. After verification, swap user-type to `user`.
+Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See [`@warlock.js/auth/verify-email-and-reset-password/SKILL.md`](@warlock.js/auth/verify-email-and-reset-password/SKILL.md).
 
 ## Side effects via auth events
 
@@ -1254,7 +1416,7 @@ Run it once when setting up a new project. Each developer typically runs it loca
 npx warlock auth.cleanup
 ```
 
-Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed, then sweeps expired access-token rows too. Fires `token.expired` per refresh token and `cleanup.completed` once.
+Runs `authService.cleanupExpiredTokens()` — deletes every refresh token whose `expires_at` has passed, then sweeps expired access-token rows and hard-deletes expired or consumed `one_time_tokens` rows (verification/reset tokens, OTP codes, passkey challenges). Fires `token.expired` per refresh token and `cleanup.completed` once.
 
 Schedule it periodically. Two common shapes:
 
@@ -1470,5 +1632,146 @@ They compose. For a hard ceiling on request volume *and* failure-aware account l
 - [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — gate a route behind a valid token (`authMiddleware`); stack the throttle in front of it on login routes.
 - [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — the login flow whose failures this middleware counts.
 - [`@warlock.js/core/use-middleware/SKILL.md`](@warlock.js/core/use-middleware/SKILL.md) — `middleware.rateLimit` and the built-in middleware suite.
+
+
+## verify-email-and-reset-password  `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`
+
+---
+name: verify-email-and-reset-password
+description: 'Email verification and password reset with hashed, single-use, expiring, purpose-bound tokens delivered through `@warlock.js/notifications` — `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)`, `resetPassword(token, newPassword)`, the `requireVerifiedEmail()` guard, and the `tokenIssueThrottleMiddleware` / `tokenConsumeThrottleMiddleware` presets. Reset revokes every access token, refresh token and cookie session; a reset request answers the same for unknown emails. Triggers: `sendEmailVerification`, `verifyEmail`, `requestPasswordReset`, `resetPassword`, `requireVerifiedEmail`, `isEmailVerified`, `OneTimeToken`, `InvalidOneTimeTokenError`, `EmailNotVerifiedError`, `NotificationsUnavailableError`, `EC007`, `EC008`, `auth.verification`, `auth.passwordReset`; "verify email", "confirm email address", "forgot password", "reset password link", "block unverified users", "resend verification email"; typical import `import { requestPasswordReset, resetPassword } from "@warlock.js/auth"`. Skip: sign-up itself — `@warlock.js/auth/register-user/SKILL.md`; login throttling — `@warlock.js/auth/throttle-login-attempts/SKILL.md`; defining notifications — `@warlock.js/notifications/define-notification/SKILL.md`.'
+---
+
+# Verify email + reset password
+
+Four service functions, one guard, two throttle presets. Auth ships no controllers — wire the routes yourself (examples below).
+
+## Prerequisites
+
+1. **`@warlock.js/notifications` installed and configured with a `mail` channel.** It is an optional peer; without it (or without `src/config/notifications.ts`) every send/request call throws `NotificationsUnavailableError` **before** a token is issued — never a silent skip.
+2. **The `one_time_tokens` table.** It ships in `authMigrations` next to the access/refresh tables; run your migrations.
+3. **A verified-date field on the user schema** (default `emailVerifiedAt`):
+
+```ts
+export const userSchema = v.object({
+  // ...
+  emailVerifiedAt: v.date().optional(),
+});
+```
+
+If the schema strips it, `verifyEmail` throws naming the field instead of pretending it worked.
+
+## Tokens
+
+- 32 random bytes, base64url. Only the **SHA-256 hash** is stored; the raw token exists only in the notification.
+- **Single use**, consumed with a conditional update — of two concurrent uses, exactly one succeeds.
+- **Expiring**: verification `24h`, reset `60m` by default.
+- **Purpose-bound**: a verification token is never accepted by `resetPassword`, and vice versa.
+- A new reset request **invalidates the user's earlier unused reset tokens**. Verification tokens are not invalidated by a resend.
+- Unknown, wrong-purpose, expired and used tokens all throw one `InvalidOneTimeTokenError` (`400`, `EC008`).
+
+## Email verification
+
+```ts
+import { requireVerifiedEmail, sendEmailVerification, verifyEmail } from "@warlock.js/auth";
+import { type RequestHandler } from "@warlock.js/core";
+
+// after User.create(...) in your register controller
+await sendEmailVerification(user);
+
+export const verifyEmailController: RequestHandler = async ({ request, response }) => {
+  const user = await verifyEmail(request.input("token")); // throws InvalidOneTimeTokenError
+  return response.success({ user });
+};
+
+router.post("/auth/verify-email", verifyEmailController, {
+  middleware: [tokenConsumeThrottleMiddleware()],
+});
+
+router.post("/auth/verify-email/resend", resendController, {
+  middleware: [authMiddleware("user"), tokenIssueThrottleMiddleware({ by: ["ip"] })],
+});
+
+// Opt-in guard, AFTER authMiddleware: 403 EmailNotVerifiedError (EC007)
+router.post("/orders", createOrder, {
+  middleware: [authMiddleware("user"), requireVerifiedEmail()],
+});
+```
+
+`isEmailVerified(user)` answers the same question in code.
+
+## Password reset
+
+```ts
+import { requestPasswordReset, resetPassword } from "@warlock.js/auth";
+
+export const forgotPasswordController: RequestHandler = async ({ request, response }) => {
+  await requestPasswordReset(User, request.input("email"));
+  // Same answer whether or not the account exists.
+  return response.success({ message: "If that account exists, we sent a reset link." });
+};
+
+export const resetPasswordController: RequestHandler = async ({ request, response }) => {
+  // Validate strength FIRST — the token is consumed before the password is written.
+  await resetPassword(request.input("token"), request.input("password"));
+  return response.success({ message: "Password updated. Please log in again." });
+};
+
+router.post("/auth/forgot-password", forgotPasswordController, {
+  middleware: [tokenIssueThrottleMiddleware()], // 3 / 1h per email + per IP
+});
+router.post("/auth/reset-password", resetPasswordController, {
+  middleware: [tokenConsumeThrottleMiddleware()], // 10 failures / 15m per IP
+});
+```
+
+`resetPassword` writes the password, then calls `authService.revokeAllTokens(user)`: every refresh token is revoked and every access token deleted, which also kills cookie sessions (a cookie holds an access token). It emits `password.reset`; `requestPasswordReset` emits `password.resetRequested`.
+
+**Password hashing.** By default auth saves `hashPassword(plain)` and checks it with `verifyPassword`, the same check login uses. If your model hashes on save (`useHashedPassword()`), that first write gets hashed twice and fails the check, so auth saves the plaintext and lets your transformer hash it once. If neither write passes the check, it throws. Plaintext is never the first thing written. To write it yourself, set `auth.passwordReset.setPassword`.
+
+## Throttling
+
+Both presets wrap `loginThrottleMiddleware` and accept its options:
+
+| Preset | Tracks | Counts | Default |
+| --- | --- | --- | --- |
+| `tokenIssueThrottleMiddleware` | email + IP | **every** request (a reset request's success is the anti-enumeration answer, so failure-aware counting would never trip) | 3 / 1h, 1h lock |
+| `tokenConsumeThrottleMiddleware` | IP | failures only, cleared on success | 10 / 15m, 15m lock |
+
+## Configuration (`src/config/auth.ts`)
+
+```ts
+const authConfigurations: AuthConfigurations = {
+  // ...
+  verification: {
+    expiresIn: "24h",
+    field: "emailVerifiedAt",
+    url: (token) => `${env("APP_URL")}/verify-email?token=${token}`,
+    notification: myVerificationNotification, // optional replacement
+  },
+  passwordReset: {
+    expiresIn: "60m",
+    identifierField: "email",
+    url: (token) => `${env("APP_URL")}/reset-password?token=${token}`,
+    notification: myResetNotification,
+    setPassword: async (user, plain) => { /* optional */ },
+  },
+  oneTimeToken: { model: AppOneTimeToken }, // optional model override
+};
+```
+
+The default notifications are `defineNotification` objects (`type: "auth.email-verification"` / `"auth.password-reset"`, `via: ["mail"]`). To replace one, pass anything with a `send(user, { token, expiresAt, url? })` method, for example your own `defineNotification<OneTimeTokenNotificationData>({...})`. `notifications` still has to be installed and configured.
+
+## Gotchas
+
+- **Without `url` config, the email contains the raw token**, not a link. Set `url` for anything user-facing.
+- **Timing isn't equalised.** An unknown email skips the database write and the send, so the response can come back measurably faster. The throttle limits probing, but it doesn't hide the timing difference.
+- **Channel send failures don't throw.** `@warlock.js/notifications` only rethrows configuration errors (such as a missing `mail` channel). An SMTP failure goes to its `failed` event, so observe it there.
+- `auth.cleanup` hard-deletes expired and consumed `one_time_tokens` rows (never trashed, even on MongoDB).
+
+## See also
+
+- [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — where `sendEmailVerification` is usually called
+- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — the underlying throttle
+- [`@warlock.js/notifications/configure-notifications/SKILL.md`](@warlock.js/notifications/configure-notifications/SKILL.md) — mail channel setup
 
 
