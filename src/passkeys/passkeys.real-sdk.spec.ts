@@ -34,6 +34,7 @@ import {
   generatePasskeyRegistrationOptions,
   verifyPasskeyRegistration,
 } from "./passkey-registration";
+import { defined } from "../test-support/defined";
 
 class User extends InMemoryModel {
   public static table = "users";
@@ -90,7 +91,7 @@ async function login(authenticator: SoftwareAuthenticator) {
 describe("passkeys against the real @simplewebauthn/server", () => {
   it("registers a software ES256 credential with 'none' attestation and stores its public key", async () => {
     const { user, authenticator } = await registered();
-    const [row] = tables.get("passkey_credentials")!;
+    const row = defined(tables.get("passkey_credentials")?.[0], "row");
 
     expect(row).toMatchObject({ credential_id: authenticator.id, counter: 0, user_id: user.id });
     expect(String(row.public_key).length).toBeGreaterThan(40);
@@ -102,8 +103,8 @@ describe("passkeys against the real @simplewebauthn/server", () => {
 
     await login(authenticator);
 
-    expect(tables.get("passkey_credentials")![0].counter).toBe(1);
-    expect((completeLogin.mock.calls[0][0] as User).id).toBe(user.id);
+    expect(defined(tables.get("passkey_credentials")?.[0], "row").counter).toBe(1);
+    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(user.id);
   });
 
   it("rejects a cloned authenticator whose counter did not advance", async () => {
@@ -115,7 +116,7 @@ describe("passkeys against the real @simplewebauthn/server", () => {
 
     expect(error).toBeInstanceOf(InvalidPasskeyError);
     expect(error.reason).toBe("counter-regression");
-    expect(tables.get("passkey_credentials")![0].counter).toBe(3);
+    expect(defined(tables.get("passkey_credentials")?.[0], "row").counter).toBe(3);
     expect(completeLogin).toHaveBeenCalledTimes(1);
   });
 

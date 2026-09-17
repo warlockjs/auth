@@ -210,6 +210,7 @@ import { InvalidOneTimeTokenError, NotificationsUnavailableError } from "../erro
 import { OneTimeToken } from "../models/one-time-token";
 import { requestPasswordReset, resetPassword } from "./password-reset";
 import { isEmailVerified, sendEmailVerification, verifyEmail } from "./email-verification";
+import { defined } from "../test-support/defined";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -266,21 +267,21 @@ describe("email verification", () => {
     expect(recipient).toBe(user);
     expect(data.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(tokenRows).toHaveLength(1);
-    expect(tokenRows[0].token_hash).toBe(sha256(data.token));
+    expect(defined(tokenRows[0], "token row").token_hash).toBe(sha256(data.token));
     expect(JSON.stringify(tokenRows[0])).not.toContain(data.token);
-    expect(tokenRows[0].purpose).toBe("email-verification");
+    expect(defined(tokenRows[0], "token row").purpose).toBe("email-verification");
   });
 
   it("defaults to a 24h expiry and honours auth.verification.expiresIn", async () => {
     const user = makeUser(1, { email: "a@x.io" });
     await sendEmailVerification(user as never);
-    const ttl = (tokenRows[0].expires_at as Date).getTime() - Date.now();
+    const ttl = (defined(tokenRows[0], "token row").expires_at as Date).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(24 * 3600_000 - 5_000);
     expect(ttl).toBeLessThanOrEqual(24 * 3600_000);
 
     configValues["auth.verification.expiresIn"] = "2h";
     await sendEmailVerification(user as never);
-    const ttl2 = (tokenRows[1].expires_at as Date).getTime() - Date.now();
+    const ttl2 = (defined(tokenRows[1], "token row").expires_at as Date).getTime() - Date.now();
     expect(ttl2).toBeLessThanOrEqual(2 * 3600_000);
     expect(ttl2).toBeGreaterThan(2 * 3600_000 - 5_000);
   });
@@ -296,7 +297,7 @@ describe("email verification", () => {
     expect(verified).toBe(user);
     expect(user.data.emailVerifiedAt).toBeInstanceOf(Date);
     expect(isEmailVerified(user as never)).toBe(true);
-    expect(tokenRows[0].consumed_at).toBeInstanceOf(Date);
+    expect(defined(tokenRows[0], "token row").consumed_at).toBeInstanceOf(Date);
   });
 
   it("rejects a second use of the same token", async () => {
@@ -325,7 +326,7 @@ describe("email verification", () => {
     const user = makeUser(1, { email: "a@x.io" });
     await sendEmailVerification(user as never);
     const [, { token }] = lastSent("auth.email-verification");
-    tokenRows[0].expires_at = new Date(Date.now() - 1_000);
+    defined(tokenRows[0], "token row").expires_at = new Date(Date.now() - 1_000);
 
     await expect(verifyEmail(token)).rejects.toBeInstanceOf(InvalidOneTimeTokenError);
     expect(user.data.emailVerifiedAt).toBeUndefined();
@@ -352,7 +353,7 @@ describe("email verification", () => {
     await sendEmailVerification(user as never);
 
     expect(custom.send).toHaveBeenCalledOnce();
-    const data = custom.send.mock.calls[0][1];
+    const data = defined(custom.send.mock.calls[0], "first call")[1];
     expect(data.url).toBe(`https://app.test/verify?t=${data.token}`);
   });
 });
@@ -367,7 +368,7 @@ describe("purpose binding", () => {
       InvalidOneTimeTokenError,
     );
     expect(user.data.password).toBe("hashed:old");
-    expect(tokenRows[0].consumed_at).toBeNull();
+    expect(defined(tokenRows[0], "token row").consumed_at).toBeNull();
   });
 
   it("a reset token cannot verify an email", async () => {
@@ -384,11 +385,11 @@ describe("password reset", () => {
   it("defaults to a 60 minute expiry", async () => {
     makeUser(1, { email: "a@x.io" });
     await requestPasswordReset(UserModel as never, "a@x.io");
-    const ttl = (tokenRows[0].expires_at as Date).getTime() - Date.now();
+    const ttl = (defined(tokenRows[0], "token row").expires_at as Date).getTime() - Date.now();
 
     expect(ttl).toBeLessThanOrEqual(3600_000);
     expect(ttl).toBeGreaterThan(3600_000 - 5_000);
-    expect(tokenRows[0].token_hash).toBe(sha256(lastSent("auth.password-reset")[1].token));
+    expect(defined(tokenRows[0], "token row").token_hash).toBe(sha256(lastSent("auth.password-reset")[1].token));
   });
 
   it("returns the same result for an unknown email and sends nothing", async () => {
@@ -471,7 +472,7 @@ describe("password reset", () => {
     const user = makeUser(1, { email: "a@x.io", password: "hashed:old" });
     await requestPasswordReset(UserModel as never, "a@x.io");
     const [, { token }] = lastSent("auth.password-reset");
-    tokenRows[0].expires_at = new Date(Date.now() - 1);
+    defined(tokenRows[0], "token row").expires_at = new Date(Date.now() - 1);
 
     await expect(resetPassword(token, "new-secret")).rejects.toBeInstanceOf(
       InvalidOneTimeTokenError,

@@ -8,6 +8,7 @@ import {
   otpRequestThrottleMiddleware,
   otpVerifyThrottleMiddleware,
 } from "./otp-throttle.middleware";
+import { defined } from "../test-support/defined";
 
 beforeEach(() => {
   loginThrottleMiddleware.mockClear();
@@ -17,7 +18,7 @@ describe("OTP throttle presets (built on loginThrottleMiddleware)", () => {
   it("issue: every request counts, per phone + IP, 3 per 1h", () => {
     otpRequestThrottleMiddleware();
 
-    const options = loginThrottleMiddleware.mock.calls[0][0] as Record<string, unknown> & {
+    const options = defined(loginThrottleMiddleware.mock.calls[0], "first call")[0] as Record<string, unknown> & {
       isFailure: () => boolean;
     };
 
@@ -33,7 +34,7 @@ describe("OTP throttle presets (built on loginThrottleMiddleware)", () => {
   it("verify: failure-aware, per phone + IP, 5 per 15m", () => {
     otpVerifyThrottleMiddleware();
 
-    const options = loginThrottleMiddleware.mock.calls[0][0] as Record<string, unknown>;
+    const options = defined(loginThrottleMiddleware.mock.calls[0], "first call")[0] as Record<string, unknown>;
 
     expect(options).toMatchObject({
       max: 5,
@@ -48,7 +49,7 @@ describe("OTP throttle presets (built on loginThrottleMiddleware)", () => {
   it("app overrides win", () => {
     otpVerifyThrottleMiddleware({ max: 2 });
 
-    expect(loginThrottleMiddleware.mock.calls[0][0]).toMatchObject({
+    expect(defined(loginThrottleMiddleware.mock.calls[0], "first call")[0]).toMatchObject({
       max: 2,
       identifierKey: "phone",
     });

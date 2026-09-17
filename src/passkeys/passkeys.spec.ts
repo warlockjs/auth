@@ -43,6 +43,7 @@ import {
   verifyPasskeyRegistration,
 } from "./passkey-registration";
 import type { PasskeyResponseJSON } from "./simplewebauthn";
+import { defined } from "../test-support/defined";
 
 class User extends InMemoryModel {
   public static table = "users";
@@ -130,7 +131,7 @@ describe("passkey registration", () => {
     const user = await User.create({ email: "ada@example.com" });
 
     const options = await generatePasskeyRegistrationOptions(user as never);
-    const [row] = tables.get("one_time_tokens")!;
+    const row = defined(tables.get("one_time_tokens")?.[0], "row");
 
     expect(row.token_hash).toBe(createHash("sha256").update(options.challenge).digest("hex"));
     expect(row).toMatchObject({
@@ -187,9 +188,9 @@ describe("passkey authentication", () => {
       credentialResponse(options.challenge),
     );
 
-    expect(tables.get("passkey_credentials")![0].counter).toBe(6);
+    expect(defined(tables.get("passkey_credentials")?.[0], "row").counter).toBe(6);
     expect(completeLogin).toHaveBeenCalledTimes(1);
-    expect((completeLogin.mock.calls[0][0] as User).id).toBe(user.id);
+    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(user.id);
     expect(result.tokens.accessToken.token).toBe("t");
   });
 
@@ -232,7 +233,7 @@ describe("passkey authentication", () => {
   it("rejects an expired challenge", async () => {
     await registeredCredential(5);
     const options = await generatePasskeyAuthenticationOptions();
-    tables.get("one_time_tokens")![0].expires_at = new Date(Date.now() - 1000);
+    defined(tables.get("one_time_tokens")?.[0], "row").expires_at = new Date(Date.now() - 1000);
 
     const error = await verifyPasskeyAuthentication(
       request(ORIGIN),
@@ -262,7 +263,7 @@ describe("passkey authentication", () => {
 
       expect(error).toBeInstanceOf(InvalidPasskeyError);
       expect(error.reason).toBe("counter-regression");
-      expect(tables.get("passkey_credentials")![0].counter).toBe(stored);
+      expect(defined(tables.get("passkey_credentials")?.[0], "row").counter).toBe(stored);
       expect(completeLogin).not.toHaveBeenCalled();
     },
   );
@@ -294,7 +295,7 @@ describe("passkey authentication", () => {
 
     expect(error.reason).toBe("origin-mismatch");
     expect(webauthn.verifyAuthenticationResponse).not.toHaveBeenCalled();
-    expect(tables.get("one_time_tokens")![0].consumed_at).toBeNull();
+    expect(defined(tables.get("one_time_tokens")?.[0], "row").consumed_at).toBeNull();
   });
 
   it("rejects an unknown credential", async () => {

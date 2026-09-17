@@ -113,6 +113,7 @@ vi.mock("@mongez/reinforcements", () => ({
 
 import { NO_EXPIRATION } from "../contracts/types";
 import { authService } from "./auth.service";
+import { defined } from "../test-support/defined";
 
 function buildUser(overrides: Record<string, unknown> = {}) {
   const fields: Record<string, unknown> = {
@@ -318,7 +319,7 @@ describe("authService expiresIn validation", () => {
 
       await authService.generateAccessToken(buildUser());
 
-      const { expiresIn } = jwtGenerate.mock.calls[0][1] as { expiresIn: unknown };
+      const { expiresIn } = defined(jwtGenerate.mock.calls[0], "first call")[1] as { expiresIn: unknown };
 
       expect(typeof expiresIn).toBe("number");
       expect(Number.isFinite(expiresIn as number)).toBe(true);
@@ -368,7 +369,7 @@ describe("authService expiresIn validation", () => {
         expiresIn: 2_592_000_000,
       });
 
-      const { expiresAt } = refreshTokenIssue.mock.calls[0][2] as { expiresAt: string };
+      const { expiresAt } = defined(refreshTokenIssue.mock.calls[0], "first call")[2] as { expiresAt: string };
 
       expect(Number.isNaN(new Date(expiresAt).getTime())).toBe(false);
     });

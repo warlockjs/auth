@@ -51,6 +51,7 @@ import { InvalidProviderCallbackError } from "../errors/invalid-provider-callbac
 import { ProviderEmailNotVerifiedError } from "../errors/provider-email-not-verified.error";
 import { completeProviderLogin, startProviderLogin } from "./provider-login";
 import { PROVIDER_STATE_COOKIE } from "./provider-state-cookie";
+import { defined } from "../test-support/defined";
 
 class User extends InMemoryModel {
   public static table = "users";
@@ -231,7 +232,7 @@ describe("startProviderLogin (google)", () => {
     expect(cookie.options).toMatchObject({ raw: true, path: "/", maxAge: 600 });
     // The verifier itself never appears in the URL.
     expect(url.toString()).not.toContain(
-      JSON.parse(Buffer.from(cookie.value.split(".")[0], "base64url").toString()).codeVerifier,
+      JSON.parse(Buffer.from(defined(cookie.value.split(".")[0], "cookie payload"), "base64url").toString()).codeVerifier,
     );
   });
 });
@@ -252,7 +253,7 @@ describe("completeProviderLogin (google)", () => {
       user_type: "user",
     });
     expect(completeLogin).toHaveBeenCalledTimes(1);
-    expect((completeLogin.mock.calls[0][0] as User).get("email")).toBe("ada@example.com");
+    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).get("email")).toBe("ada@example.com");
     expect(result.tokens.accessToken.token).toBe("t");
   });
 
@@ -274,7 +275,7 @@ describe("completeProviderLogin (google)", () => {
     const [payload, signature] = login.cookie.value.split(".");
     const forgedPayload = Buffer.from(
       JSON.stringify({
-        ...JSON.parse(Buffer.from(payload, "base64url").toString()),
+        ...JSON.parse(Buffer.from(defined(payload, "cookie payload"), "base64url").toString()),
         state: "attacker",
       }),
     ).toString("base64url");
@@ -368,8 +369,8 @@ describe("completeProviderLogin (google)", () => {
     await callback(login.cookie.value, { code: login.code, state: login.state });
 
     expect(tables.get("users")).toHaveLength(1);
-    expect(tables.get("provider_accounts")![0].user_id).toBe(existing.id);
-    expect((completeLogin.mock.calls[0][0] as User).id).toBe(existing.id);
+    expect(defined(tables.get("provider_accounts")?.[0], "row").user_id).toBe(existing.id);
+    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(existing.id);
   });
 
   it("an existing link resolves the user by provider id, whatever the email says now", async () => {
@@ -392,7 +393,7 @@ describe("completeProviderLogin (google)", () => {
 
     await callback(login.cookie.value, { code: login.code, state: login.state });
 
-    expect((completeLogin.mock.calls[0][0] as User).id).toBe(linked.id);
+    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(linked.id);
     expect(tables.get("users")).toHaveLength(1);
   });
 });

@@ -36,6 +36,7 @@ vi.mock("../services/auth.service", () => ({ authService: { completeLogin } }));
 import { InvalidOneTimeTokenError } from "../errors/invalid-one-time-token.error";
 import { InMemoryModel, resetTables, tables } from "../test-support/in-memory-cascade";
 import { requestOtp, verifyOtp } from "./otp";
+import { defined } from "../test-support/defined";
 
 class User extends InMemoryModel {
   public static table = "users";
@@ -70,7 +71,7 @@ beforeEach(async () => {
 async function issuedCode(): Promise<string> {
   await requestOtp(User as never, PHONE);
 
-  return sent[sent.length - 1].payload.code;
+  return defined(sent.at(-1), "sent message").payload.code;
 }
 
 const otpRows = () => (tables.get("one_time_tokens") ?? []).filter((row) => row.purpose === "otp");
@@ -80,11 +81,11 @@ describe("requestOtp", () => {
     configValues["auth.otp.channel"] = "whatsapp";
 
     const code = await issuedCode();
-    const [row] = otpRows();
+    const row = defined(otpRows()[0], "otp row");
 
     expect(code).toMatch(/^\d{6}$/);
     expect(sent[0]).toMatchObject({ channel: "whatsapp", to: PHONE });
-    expect(sent[0].payload.body).toContain(code);
+    expect(defined(sent[0], "sent message").payload.body).toContain(code);
     expect(row).toMatchObject({ purpose: "otp", user_id: user.id, attempts: 0, consumed_at: null });
     expect(JSON.stringify(row)).not.toContain(code);
     expect(String(row.token_hash).length).toBeLessThanOrEqual(64);
@@ -94,7 +95,7 @@ describe("requestOtp", () => {
     const before = Date.now();
     await issuedCode();
 
-    const expiresAt = (otpRows()[0].expires_at as Date).getTime();
+    const expiresAt = (defined(otpRows()[0], "otp row").expires_at as Date).getTime();
 
     expect(expiresAt - before).toBeGreaterThanOrEqual(5 * 60_000 - 50);
     expect(expiresAt - before).toBeLessThanOrEqual(5 * 60_000 + 1000);
@@ -135,7 +136,7 @@ describe("verifyOtp", () => {
 
   it("rejects an expired code", async () => {
     const code = await issuedCode();
-    otpRows()[0].expires_at = new Date(Date.now() - 1);
+    defined(otpRows()[0], "otp row").expires_at = new Date(Date.now() - 1);
 
     await expect(verifyOtp(User as never, PHONE, code)).rejects.toBeInstanceOf(
       InvalidOneTimeTokenError,
@@ -155,7 +156,7 @@ describe("verifyOtp", () => {
     await expect(verifyOtp(User as never, PHONE, code)).rejects.toBeInstanceOf(
       InvalidOneTimeTokenError,
     );
-    expect(otpRows()[0].consumed_at).toBeInstanceOf(Date);
+    expect(defined(otpRows()[0], "otp row").consumed_at).toBeInstanceOf(Date);
     expect(completeLogin).not.toHaveBeenCalled();
   });
 
@@ -166,7 +167,7 @@ describe("verifyOtp", () => {
       Array.from({ length: 20 }, () => verifyOtp(User as never, PHONE, wrongCode(code))),
     );
 
-    expect(otpRows()[0].attempts).toBe(5);
+    expect(defined(otpRows()[0], "otp row").attempts).toBe(5);
     await expect(verifyOtp(User as never, PHONE, code)).rejects.toBeInstanceOf(
       InvalidOneTimeTokenError,
     );
