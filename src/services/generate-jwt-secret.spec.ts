@@ -18,8 +18,8 @@ vi.mock("@warlock.js/fs", () => ({
 }));
 
 vi.mock("@warlock.js/core", () => ({
-  rootPath: (...args: unknown[]) => rootPath(...args),
-  environment: (...args: unknown[]) => environment(...args),
+  rootPath: (...args: Parameters<typeof rootPath>) => rootPath(...args),
+  environment: (...args: Parameters<typeof environment>) => environment(...args),
 }));
 
 vi.mock("@warlock.js/logger", () => ({
@@ -27,7 +27,7 @@ vi.mock("@warlock.js/logger", () => ({
 }));
 
 vi.mock("@mongez/reinforcements", () => ({
-  Random: { token: (...args: unknown[]) => randomToken(...args) },
+  Random: { token: (...args: Parameters<typeof randomToken>) => randomToken(...args) },
 }));
 
 import { generateJWTSecret } from "./generate-jwt-secret";

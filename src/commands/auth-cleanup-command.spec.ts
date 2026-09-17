@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 const cleanupExpiredTokens = vi.fn();
 
@@ -24,7 +24,7 @@ vi.mock("../services/auth.service", () => ({
 
 import { registerAuthCleanupCommand } from "./auth-cleanup-command";
 
-let logSpy: ReturnType<typeof vi.spyOn>;
+let logSpy: MockInstance<typeof console.log>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,7 +49,7 @@ describe("registerAuthCleanupCommand", () => {
 
   it("delegates to authService.cleanupExpiredTokens and reports the removed count", async () => {
     cleanupExpiredTokens.mockResolvedValue(3);
-    const cmd = registerAuthCleanupCommand() as { action: () => Promise<void> };
+    const cmd = registerAuthCleanupCommand() as unknown as { action: () => Promise<void> };
 
     await cmd.action();
 
@@ -59,7 +59,7 @@ describe("registerAuthCleanupCommand", () => {
 
   it("reports the empty case when nothing was expired", async () => {
     cleanupExpiredTokens.mockResolvedValue(0);
-    const cmd = registerAuthCleanupCommand() as { action: () => Promise<void> };
+    const cmd = registerAuthCleanupCommand() as unknown as { action: () => Promise<void> };
 
     await cmd.action();
 
