@@ -35,6 +35,20 @@ npm install @warlock.js/auth
 
 ## Minimal wire-up
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ```ts title="warlock.config.ts"
 import {
   authMigrations,
@@ -57,7 +71,8 @@ export default defineConfig({
 ```
 
 ```ts title="src/config/auth.ts"
-import { User } from "@/app/users/models/user.model";
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
 
 export default {
   userType: {
@@ -125,6 +140,20 @@ The package ships `AccessToken` and `RefreshToken` models and runs the whole tok
 
 Reach for this when you need an extra column on the token tables — the common case is a tenant key (`organization_id`) so tokens are partitioned per organization, or richer device metadata.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## The three pieces
 
 A storage override is always three coordinated steps. Miss any one and it breaks — see the strict-mode note below.
@@ -157,9 +186,33 @@ export class AppAccessToken extends AccessToken {
 
 Refresh tokens follow the same shape — extend `refreshTokenSchema`, and override `issue(user, token, options)` (`options` is `{ familyId, expiresAt, deviceInfo? }`) the same way, copying the base fields plus your column.
 
+```ts title="src/app/auth/models/app-refresh-token.ts"
+import { RefreshToken, refreshTokenSchema, type Auth, type RefreshTokenIssueOptions } from "@warlock.js/auth";
+import { v } from "@warlock.js/seal";
+
+export class AppRefreshToken extends RefreshToken {
+  public static schema = refreshTokenSchema.extend({
+    organization_id: v.string().exists("Organization", { column: "id" }),
+  });
+
+  public static issue(user: Auth, token: string, options: RefreshTokenIssueOptions) {
+    return this.create({
+      token,
+      user_id: user.id,
+      user_type: user.userType,
+      family_id: options.familyId,
+      expires_at: options.expiresAt,
+      organization_id: user.get("organization_id"),
+    });
+  }
+}
+```
+
 ### 2. Register the subclass in config
 
 ```ts title="src/config/auth.ts"
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
 import { AppAccessToken } from "app/auth/models/app-access-token";
 import { AppRefreshToken } from "app/auth/models/app-refresh-token";
 
@@ -254,6 +307,14 @@ The `Auth` base class has a `userType` slot. Subclass it once per type, register
 ```ts title="src/app/users/models/user/user.model.ts"
 import { Auth } from "@warlock.js/auth";
 import { RegisterModel } from "@warlock.js/cascade";
+import { v, type Infer } from "@warlock.js/seal";
+
+export const userSchema = v.object({
+  email: v.string().email(),
+  password: v.string(),
+});
+
+export type UserSchema = Infer<typeof userSchema>;
 
 @RegisterModel()
 export class User extends Auth<UserSchema> {
@@ -266,7 +327,18 @@ export class User extends Auth<UserSchema> {
 }
 ```
 
-```ts title="src/app/admins/models/admin/admin.model.ts"
+```ts title="src/app/admins/models/admin.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+import { v, type Infer } from "@warlock.js/seal";
+
+export const adminSchema = v.object({
+  email: v.string().email(),
+  password: v.string(),
+});
+
+export type AdminSchema = Infer<typeof adminSchema>;
+
 @RegisterModel()
 export class Admin extends Auth<AdminSchema> {
   public static table = "admins";
@@ -283,8 +355,9 @@ Each gets its own table, its own schema, its own `userType` slug. They DON'T sha
 ## Register them in `config.auth`
 
 ```ts title="src/config/auth.ts"
-import { User } from "@/app/users/models/user.model";
-import { Admin } from "@/app/admins/models/admin.model";
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
+import { Admin } from "app/admins/models/admin.model";
 
 export default {
   userType: {
@@ -311,7 +384,13 @@ The keys (`"user"`, `"admin"`) are the **userType slugs** that flow through ever
 ## Gate routes per user type
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
 import { authMiddleware } from "@warlock.js/auth";
+
+const userAccountController: RequestHandler = async ({ response }) => response.success({});
+const listUsersController: RequestHandler = async ({ response }) => response.success({});
+const backOfficeController: RequestHandler = async ({ response }) => response.success({});
+const dashboardController: RequestHandler = async ({ response }) => response.success({});
 
 router.get("/account", userAccountController, { middleware: [authMiddleware("user")] });
 router.get("/admin/users", listUsersController, { middleware: [authMiddleware("admin")] });
@@ -395,12 +474,26 @@ description: 'Run the full login flow via authService.login(Model, credentials, 
 
 `authService` exposes the full flow. Pass the model class so the service knows which user-type to look up.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## Login — `authService.login(Model, credentials, deviceInfo?)`
 
 ```ts
 import { authService } from "@warlock.js/auth";
 import { type RequestHandler } from "@warlock.js/core";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export const loginController: RequestHandler = async ({ request, response }) => {
   const result = await authService.login(User, {
@@ -557,10 +650,10 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 
 ---
 name: login-with-providers
-description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
+description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), GitHub, Discord, LinkedIn, Apple (`form_post` callback), Facebook and X, passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "login with GitHub", "Sign in with Apple", "login with Discord", "login with LinkedIn", "login with Facebook", "login with X", `auth.providers.github`, "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
 ---
 
-# Login with Google, passkeys, or a phone code
+# Login with an OAuth provider, passkeys, or a phone code
 
 Services only, as with password login: you write the routes. Each `verify`/`complete` call returns the same `LoginResult` as `authService.login`, so the next step is the same too:
 
@@ -576,6 +669,8 @@ authService.setAuthCookie(response, tokens.accessToken); // cookie session, or r
 | Method | Command | Installs |
 | --- | --- | --- |
 | Google | `warlock add auth-google` | `jose` |
+| Apple, LinkedIn | `warlock add auth-google` (or `npm install jose`) — there is no separate `auth-apple` / `auth-linkedin` feature yet | `jose` |
+| GitHub, Discord, Facebook, X | nothing — plain OAuth 2 over `fetch` | nothing |
 | Passkeys | `warlock add auth-passkeys` | `@simplewebauthn/server` (add `@simplewebauthn/browser` to your client bundle) |
 | Phone code | `warlock add notifications` + your own `sms`/`whatsapp` channel | nothing else. Auth ships no SMS/WhatsApp driver |
 
@@ -619,6 +714,133 @@ Client side, the button is just a link. It must be a top-level navigation, not a
 - The callback rejects, with `InvalidProviderCallbackError` (400, `EC009`): a missing, forged or expired cookie, a `state` mismatch, a `?error=` from Google, a failed code exchange, and an id_token with a bad signature, `iss`, `aud`, `exp` or `nonce`. `error.reason` says which. The response message is generic.
 - **Linking.** An existing `provider_accounts` row (provider plus Google `sub`) always decides the user. Without one, the Google email must be verified (`email_verified: true`), or the call throws `ProviderEmailNotVerifiedError` (403, `EC010`) and nothing is linked or created. A verified email links the matching user, or creates one with `{ email, name, emailVerifiedAt: now }`.
 - Other OIDC providers: implement `AuthProvider` (`authorizationUrl(state)`, `handleCallback({ query, expected })`) and register it under `auth.providers.custom.<name>`.
+
+## GitHub, Discord, LinkedIn
+
+Same shape as Google: a config block under `auth.providers.<name>`, a GET
+route that redirects to `startProviderLogin(response, "<name>")`, and a GET
+callback that calls `completeProviderLogin(User, "<name>", request, response)`.
+
+```ts
+// src/config/auth.ts
+providers: {
+  github: {
+    clientId: env("GITHUB_CLIENT_ID"),
+    clientSecret: env("GITHUB_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/github/callback`,
+    // scopes: ["read:user", "user:email"],
+  },
+  discord: {
+    clientId: env("DISCORD_CLIENT_ID"),
+    clientSecret: env("DISCORD_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/discord/callback`,
+    // scopes: ["identify", "email"],
+  },
+  linkedin: {
+    clientId: env("LINKEDIN_CLIENT_ID"),
+    clientSecret: env("LINKEDIN_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/linkedin/callback`,
+    // scopes: ["openid", "profile", "email"],
+  },
+},
+```
+
+- **GitHub** — OAuth 2 + PKCE. `/user.email` is `null` unless public, so the email is read from `/user/emails`: only the address that is both **primary and verified** is used; otherwise the profile has no email and the unverified-email rule applies.
+- **Discord** — OAuth 2 + PKCE; `email` comes from `/users/@me` and counts as verified only when Discord's `verified` flag is `true`.
+- **LinkedIn** — OpenID Connect; the id_token is verified with `jose` against LinkedIn's JWKS (signature, issuer, audience, expiry, nonce). `email_verified` must be the boolean `true`.
+- Provider names resolve by own key only — `auth.providers` inherited keys such as `toString` never resolve as a provider.
+
+## Apple
+
+```ts
+// src/config/auth.ts
+providers: {
+  apple: {
+    clientId: env("APPLE_CLIENT_ID"), // the Services ID
+    teamId: env("APPLE_TEAM_ID"),
+    keyId: env("APPLE_KEY_ID"),
+    privateKey: env("APPLE_PRIVATE_KEY"), // the .p8 file's PKCS8 PEM contents
+    redirectUri: `${env("APP_URL")}/auth/apple/callback`,
+    // scopes: ["name", "email"],
+  },
+},
+```
+
+```ts
+router.get("/auth/apple", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "apple")),
+);
+
+// Apple POSTs the callback (form_post) when name/email scopes are requested —
+// this route must accept a POST body, not just a query string.
+router.post("/auth/apple/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "apple", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- Apple has no static client secret: a fresh ES256 JWT (`iss` = team id, `sub` = client id, `aud` = Apple, `kid` = key id) is signed with your `.p8` private key on every callback.
+- The account name arrives only on the **first** authorization, as a `user` form field (`{"name":{"firstName","lastName"}}`) — save it then, since later logins never send it again.
+- The email may be a private-relay address (`@privaterelay.appleid.com`); it is still a real, working address and is accepted like any other.
+- Same rejections and linking rules as Google, through `InvalidProviderCallbackError` / `ProviderEmailNotVerifiedError`.
+- Apple's `form_post` callback is a cross-site POST, so its state cookie is written `SameSite=None; Secure` instead of the usual `Lax` — a browser drops a `Lax` cookie there. `Secure` needs HTTPS: Apple requires it in production anyway, and for local dev you need `https://` or `http://localhost` (browsers treat `localhost` as a secure context even over plain http).
+
+## Facebook
+
+```ts
+providers: {
+  facebook: {
+    clientId: env("FACEBOOK_CLIENT_ID"),
+    clientSecret: env("FACEBOOK_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/facebook/callback`,
+    // scopes: ["email", "public_profile"],
+  },
+},
+```
+
+```ts
+router.get("/auth/facebook", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "facebook")),
+);
+
+router.get("/auth/facebook/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "facebook", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- Plain OAuth 2 (no `id_token`); the profile comes from Graph `/me?fields=id,name,email,picture`. Facebook only ever returns a confirmed address, so a present `email` counts as verified.
+- An app without the `email` permission granted (or a user with none on file) gets no email — the same missing/unverified path as every other provider, never an invented address.
+
+## X (Twitter)
+
+```ts
+providers: {
+  x: {
+    clientId: env("X_CLIENT_ID"),
+    clientSecret: env("X_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/x/callback`,
+    // scopes: ["tweet.read", "users.read"],
+  },
+},
+```
+
+```ts
+router.get("/auth/x", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "x")),
+);
+
+router.get("/auth/x/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "x", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- OAuth 2 with PKCE, plus HTTP Basic auth (`client_id:client_secret`) at the token endpoint for the confidential client — X requires both together.
+- X's `/2/users/me` never returns an email address at all. `email` is always `undefined`; a first login therefore always needs an existing `provider_accounts` link (create one another way first) or it is rejected the same as any missing email — X gives auth no way to invent or infer one.
 
 ## Passkeys
 
@@ -987,12 +1209,31 @@ description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argum
 
 `authMiddleware(allowedUserType: string | string[])` returns a Warlock middleware. Attach it to routes or route groups. The argument is **required** — there is no anonymous/optional mode. A request without a valid access token is always rejected with `401`; public routes simply omit the middleware.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## Two modes
 
 Middleware is attached via the route's `options.middleware` array (the third argument) — never as a positional argument.
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
 import { authMiddleware } from "@warlock.js/auth";
+
+const accountController: RequestHandler = async ({ response }) => response.success({});
+const adminController: RequestHandler = async ({ response }) => response.success({});
+const staffController: RequestHandler = async ({ response }) => response.success({});
 
 // Mode 1 — required, any user type
 //   Rejects with 401 if no valid token; any authenticated user passes.
@@ -1045,6 +1286,8 @@ By default every auth failure — API or page — returns the JSON `401` above. 
 Opt into a redirect with `auth.pageAuth` (5.8+). Set `loginPath` and a guarded **page** route (`route.isPage`) that a logged-out browser hits redirects to `loginPath?returnUrl=<original path>` instead of returning the JSON 401:
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   pageAuth: {
@@ -1066,11 +1309,21 @@ The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthCo
 
 ## Reading the user in a controller
 
+`request.locals.user` types as `RequestUser` — an empty interface by default. Narrow it once, app-wide, via module augmentation so it carries your model's shape:
+
+```ts title="src/app/users/request-user.ts"
+import type { User } from "app/users/models/user/user.model";
+
+declare module "@warlock.js/auth" {
+  interface RequestUser extends User {}
+}
+```
+
 ```ts
 import { type RequestHandler } from "@warlock.js/core";
 
 export const accountController: RequestHandler = async ({ request, response }) => {
-  const user = request.locals.user!;          // typed via your Auth subclass
+  const user = request.locals.user!;          // typed via the RequestUser augmentation above
   return response.success({
     id: user.id,
     email: user.get("email"),
@@ -1133,17 +1386,26 @@ That last one is the difference between a role check and an authorization model:
 Install [`@warlock.js/access`](@warlock.js/access/overview/SKILL.md) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
+import { authMiddleware } from "@warlock.js/auth";
 import { gate, can, definePolicy } from "@warlock.js/access";
+import { User } from "app/users/models/user/user.model";
+
+const articlesController: RequestHandler = async ({ request, response }) => {
+  // Who-may-act-on-whom: an ABAC policy on top of the RBAC grant
+  definePolicy("users.create", (actor, target, ctx) =>
+    ctx.hasRole("superAdmin") || (target as User).userType === "teacher",
+  );
+
+  if (await can(request.locals.user!, "users.create", { resource: request.body })) {
+    /* ... */
+  }
+
+  return response.success({});
+};
 
 // Permission-based route gate, in place of a user-type gate
 router.post("/articles", articlesController, { middleware: [authMiddleware([]), gate("articles.create")] });
-
-// Who-may-act-on-whom: an ABAC policy on top of the RBAC grant
-definePolicy("users.create", (actor, target, ctx) =>
-  ctx.hasRole("superAdmin") || (target as User).userType === "teacher",
-);
-
-if (await can(request.locals.user, "users.create", { resource: payload })) { /* ... */ }
 ```
 
 Use `authMiddleware` to establish *who the caller is*, and `access` to decide *what they may do*. They compose — `access` reads the user `authMiddleware` put on the request.
@@ -1165,15 +1427,30 @@ A route is header-only or cookie-only, never both — `tokenFrom` accepts exactl
 Reading a cookie is opt-in per route (above); *writing* one is a separate, explicit step your login/logout controller calls — `authService.login`/`logout` never set cookies implicitly, so upgrading never starts emitting `Set-Cookie` for an existing bearer-only app.
 
 ```ts
+import { type RequestHandler } from "@warlock.js/core";
 import { authService } from "@warlock.js/auth";
+import { User } from "app/users/models/user/user.model";
 
-// after issuing tokens
-const { user, tokens } = await authService.login(User, credentials);
-authService.setAuthCookie(response, tokens.accessToken); // Max-Age derived from tokens.accessToken.expiresAt
+export const loginController: RequestHandler = async ({ request, response }) => {
+  const result = await authService.login(User, {
+    email: request.input("email"),
+    password: request.input("password"),
+  });
+  if (!result) return response.unauthorized({ error: "Invalid credentials" });
 
-// after revoking tokens
-await authService.logout(user, accessToken, refreshToken);
-authService.clearAuthCookie(response);
+  const { user, tokens } = result;
+  authService.setAuthCookie(response, tokens.accessToken); // Max-Age derived from tokens.accessToken.expiresAt
+
+  return response.success({ id: user.id });
+};
+
+export const logoutController: RequestHandler = async ({ request, response }) => {
+  const user = request.locals.user!;
+  await authService.logout(user, request.header("authorization"));
+  authService.clearAuthCookie(response);
+
+  return response.success({});
+};
 ```
 
 `setAuthCookie(response, token, options?)` accepts either the raw token string or an `AccessTokenOutput` (`{ token, expiresAt }`, e.g. `tokens.accessToken` from `login`) — passing the latter derives `Max-Age` from `expiresAt` automatically; pass `options.maxAge` (seconds) to override it, or a bare string with no `maxAge` for a session cookie. `clearAuthCookie(response, options?)` clears it.
@@ -1181,6 +1458,8 @@ authService.clearAuthCookie(response);
 Cookie **attribute flags are not configurable** — `HttpOnly`, `SameSite=Lax`, and `Secure` outside development come from core's `secureCookieDefaults()`, the same floor every `response.cookie()` call gets. Only the cookie's `name` (default `"access_token"`) and `path` (default `"/"`) can be set, via `options` or the `auth.cookie` config block:
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   cookie: {
@@ -1204,6 +1483,8 @@ To close that gap, `authMiddleware` automatically runs a CSRF Origin check on ev
 - **Header-token auth is completely unaffected**, as are safe methods (`GET`/`HEAD`/`OPTIONS`) under cookie auth.
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   csrf: {
@@ -1240,12 +1521,26 @@ description: 'Sign up a new user and issue the initial token pair — User.creat
 
 Two-step on the server: create the user (with hashed password), then issue tokens. Cascade handles the persistence; `authService` handles the tokens.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## The minimal shape
 
 ```ts
 import { authService } from "@warlock.js/auth";
 import { hashPassword, type RequestHandler } from "@warlock.js/core";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export const registerController: RequestHandler = async ({ request, response }) => {
   const { email, password, name } = request.all();
@@ -1473,10 +1768,24 @@ Unlike `auth.cleanup`, do **not** schedule it: it is a full table scan (it must 
 
 If `auth.cleanup` doesn't cover everything your app needs (e.g. you also want to revoke tokens for inactive users), write your own command and combine the auth service helpers:
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ```ts
 import { command } from "@warlock.js/core";
 import { authService } from "@warlock.js/auth";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export function registerDeepCleanupCommand() {
   return command({
@@ -1490,6 +1799,7 @@ export function registerDeepCleanupCommand() {
     action: async () => {
       await authService.cleanupExpiredTokens();
 
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const stale = await User.where("last_seen_at", "<", thirtyDaysAgo).get();
 
       for (const user of stale) {

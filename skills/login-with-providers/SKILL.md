@@ -1,9 +1,9 @@
 ---
 name: login-with-providers
-description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
+description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), GitHub, Discord, LinkedIn, Apple (`form_post` callback), Facebook and X, passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "login with GitHub", "Sign in with Apple", "login with Discord", "login with LinkedIn", "login with Facebook", "login with X", `auth.providers.github`, "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
 ---
 
-# Login with Google, passkeys, or a phone code
+# Login with an OAuth provider, passkeys, or a phone code
 
 Services only, as with password login: you write the routes. Each `verify`/`complete` call returns the same `LoginResult` as `authService.login`, so the next step is the same too:
 
@@ -19,7 +19,8 @@ authService.setAuthCookie(response, tokens.accessToken); // cookie session, or r
 | Method | Command | Installs |
 | --- | --- | --- |
 | Google | `warlock add auth-google` | `jose` |
-| Apple | `warlock add auth-apple` | `jose` |
+| Apple, LinkedIn | `warlock add auth-google` (or `npm install jose`) — there is no separate `auth-apple` / `auth-linkedin` feature yet | `jose` |
+| GitHub, Discord, Facebook, X | nothing — plain OAuth 2 over `fetch` | nothing |
 | Passkeys | `warlock add auth-passkeys` | `@simplewebauthn/server` (add `@simplewebauthn/browser` to your client bundle) |
 | Phone code | `warlock add notifications` + your own `sms`/`whatsapp` channel | nothing else. Auth ships no SMS/WhatsApp driver |
 
@@ -63,6 +64,41 @@ Client side, the button is just a link. It must be a top-level navigation, not a
 - The callback rejects, with `InvalidProviderCallbackError` (400, `EC009`): a missing, forged or expired cookie, a `state` mismatch, a `?error=` from Google, a failed code exchange, and an id_token with a bad signature, `iss`, `aud`, `exp` or `nonce`. `error.reason` says which. The response message is generic.
 - **Linking.** An existing `provider_accounts` row (provider plus Google `sub`) always decides the user. Without one, the Google email must be verified (`email_verified: true`), or the call throws `ProviderEmailNotVerifiedError` (403, `EC010`) and nothing is linked or created. A verified email links the matching user, or creates one with `{ email, name, emailVerifiedAt: now }`.
 - Other OIDC providers: implement `AuthProvider` (`authorizationUrl(state)`, `handleCallback({ query, expected })`) and register it under `auth.providers.custom.<name>`.
+
+## GitHub, Discord, LinkedIn
+
+Same shape as Google: a config block under `auth.providers.<name>`, a GET
+route that redirects to `startProviderLogin(response, "<name>")`, and a GET
+callback that calls `completeProviderLogin(User, "<name>", request, response)`.
+
+```ts
+// src/config/auth.ts
+providers: {
+  github: {
+    clientId: env("GITHUB_CLIENT_ID"),
+    clientSecret: env("GITHUB_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/github/callback`,
+    // scopes: ["read:user", "user:email"],
+  },
+  discord: {
+    clientId: env("DISCORD_CLIENT_ID"),
+    clientSecret: env("DISCORD_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/discord/callback`,
+    // scopes: ["identify", "email"],
+  },
+  linkedin: {
+    clientId: env("LINKEDIN_CLIENT_ID"),
+    clientSecret: env("LINKEDIN_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/linkedin/callback`,
+    // scopes: ["openid", "profile", "email"],
+  },
+},
+```
+
+- **GitHub** — OAuth 2 + PKCE. `/user.email` is `null` unless public, so the email is read from `/user/emails`: only the address that is both **primary and verified** is used; otherwise the profile has no email and the unverified-email rule applies.
+- **Discord** — OAuth 2 + PKCE; `email` comes from `/users/@me` and counts as verified only when Discord's `verified` flag is `true`.
+- **LinkedIn** — OpenID Connect; the id_token is verified with `jose` against LinkedIn's JWKS (signature, issuer, audience, expiry, nonce). `email_verified` must be the boolean `true`.
+- Provider names resolve by own key only — `auth.providers` inherited keys such as `toString` never resolve as a provider.
 
 ## Apple
 
