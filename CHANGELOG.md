@@ -4,6 +4,18 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.16.0 - 2026-09-18
+
+### Added
+
+- Six new login providers: GitHub, Discord, LinkedIn, Apple, Facebook and X, configured under `auth.providers.<name>` and used through `startProviderLogin` / `completeProviderLogin`. Apple and LinkedIn verify their id_token with `jose`. The other four use plain OAuth 2.
+- `AuthProvider.callbackMode` (`"query"` | `"form_post"`). Apple uses `form_post`, so its state cookie is written with `SameSite=None; Secure` (HTTPS required). Query-mode providers keep `SameSite=Lax`.
+
+### Fixed
+
+- Provider names now resolve only from `auth.providers`' own keys, so a name inherited from the object prototype, such as `toString`, is never treated as a provider.
+- The Set-Cookie that clears the provider state cookie now repeats the attributes the cookie was written with.
+
 ## 5.13.0 - 2026-09-17
 
 ### Added
