@@ -28,7 +28,9 @@ vi.mock("jose", async () => {
   const entry = readdirSync(store).find((name) => name.startsWith("jose@"));
 
   if (!entry) {
-    throw new Error(`google-provider-login.spec needs jose under ${store} to sign test id_tokens.`);
+    throw new Error(
+      `linkedin-provider-login.spec needs jose under ${store} to sign test id_tokens.`,
+    );
   }
 
   const real = await import(
@@ -61,10 +63,9 @@ class User extends InMemoryModel {
   }
 }
 
-const CLIENT_ID = "client-123.apps.googleusercontent.com";
-const ISSUER = "https://accounts.google.com";
+const CLIENT_ID = "linkedin-client-123";
+const ISSUER = "https://www.linkedin.com/oauth";
 
-/** The jose surface these specs sign with. Loaded by a variable specifier: jose has no types in reach of auth. */
 type TestJose = {
   generateKeyPair: (alg: string) => Promise<{ publicKey: CryptoKey; privateKey: CryptoKey }>;
   exportJWK: (key: CryptoKey) => Promise<Record<string, unknown>>;
@@ -86,14 +87,11 @@ const JOSE: string = "jose";
 
 let jose: TestJose;
 let signingKey: CryptoKey;
-let foreignKey: CryptoKey;
 
 beforeAll(async () => {
   jose = (await import(JOSE)) as TestJose;
   const pair = await jose.generateKeyPair("RS256");
-  const foreign = await jose.generateKeyPair("RS256");
   signingKey = pair.privateKey;
-  foreignKey = foreign.privateKey;
 
   const jwk = { ...(await jose.exportJWK(pair.publicKey)), kid: "k1", alg: "RS256" };
   keys.resolver = jose.createLocalJWKSet({ keys: [jwk] });
@@ -114,7 +112,6 @@ async function idToken(
     .sign(options.key ?? signingKey);
 }
 
-/** A Google token endpoint that, like Google, enforces PKCE against the challenge bound to the code. */
 const tokenEndpoint = {
   challengeForCode: new Map<string, string>(),
   idToken: "" as string,
@@ -129,10 +126,7 @@ function fakeResponse() {
     cookie: vi.fn((name: string, value: string, options: Record<string, unknown>) => {
       cookies.set(name, { value, options });
     }),
-    clearCookie: vi.fn((name: string, options: Record<string, unknown>) => {
-      cookies.delete(name);
-      return options;
-    }),
+    clearCookie: vi.fn((name: string) => cookies.delete(name)),
   };
 }
 
@@ -143,10 +137,9 @@ function fakeRequest(cookie: string | undefined, query: Record<string, unknown>)
   };
 }
 
-/** Start a login and have "Google" issue a code bound to its PKCE challenge. */
 async function startLogin() {
   const response = fakeResponse();
-  const url = new URL(await startProviderLogin(response as never, "google"));
+  const url = new URL(await startProviderLogin(response as never, "linkedin"));
   const params = url.searchParams;
   const code = `code-${Math.random()}`;
 
@@ -166,24 +159,10 @@ async function callback(cookie: string | undefined, query: Record<string, unknow
 
   return completeProviderLogin(
     User as never,
-    "google",
+    "linkedin",
     fakeRequest(cookie, query) as never,
     response as never,
   );
-}
-
-/** Like {@link callback}, but also hands back the fake response, to inspect `clearCookie`'s attrs. */
-async function callbackWithResponse(cookie: string | undefined, query: Record<string, unknown>) {
-  const response = fakeResponse();
-
-  const result = await completeProviderLogin(
-    User as never,
-    "google",
-    fakeRequest(cookie, query) as never,
-    response as never,
-  );
-
-  return { result, response };
 }
 
 beforeEach(() => {
@@ -191,10 +170,10 @@ beforeEach(() => {
   for (const key of Object.keys(configValues)) delete configValues[key];
   Object.assign(configValues, {
     "auth.accessToken.secret": "test-secret",
-    "auth.providers.google": {
+    "auth.providers.linkedin": {
       clientId: CLIENT_ID,
       clientSecret: "shh",
-      redirectUri: "https://app.test/auth/google/callback",
+      redirectUri: "https://app.test/auth/linkedin/callback",
     },
   });
 
@@ -231,35 +210,26 @@ afterEach(() => {
 });
 
 const verifiedClaims = (nonce: string): Claims => ({
-  sub: "google-sub-1",
+  sub: "linkedin-sub-1",
   email: "ada@example.com",
   email_verified: true,
   name: "Ada",
   nonce,
 });
 
-describe("startProviderLogin (google)", () => {
+describe("startProviderLogin (linkedin)", () => {
   it("redirects with state, nonce and an S256 PKCE challenge, and stores them in a short-lived signed cookie", async () => {
     const { url, cookie } = await startLogin();
 
-    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.origin + url.pathname).toBe("https://www.linkedin.com/oauth/v2/authorization");
     expect(url.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("scope")).toBe("openid email profile");
+    expect(url.searchParams.get("scope")).toBe("openid profile email");
     expect(cookie.options).toMatchObject({ raw: true, path: "/", maxAge: 600 });
-    // Google's callback is a top-level GET redirect — no SameSite/Secure override, unlike Apple's form_post.
-    expect(cookie.options).not.toHaveProperty("sameSite");
-    expect(cookie.options).not.toHaveProperty("secure");
-    // The verifier itself never appears in the URL.
-    expect(url.toString()).not.toContain(
-      JSON.parse(
-        Buffer.from(defined(cookie.value.split(".")[0], "cookie payload"), "base64url").toString(),
-      ).codeVerifier,
-    );
   });
 });
 
-describe("completeProviderLogin (google)", () => {
+describe("completeProviderLogin (linkedin)", () => {
   it("exchanges the code with the cookie's PKCE verifier, verifies the id_token, creates + links a verified user, and finishes through completeLogin", async () => {
     const login = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
@@ -270,27 +240,12 @@ describe("completeProviderLogin (google)", () => {
     expect(tables.get("users")).toHaveLength(1);
     expect(tables.get("users")![0]).toMatchObject({ email: "ada@example.com", name: "Ada" });
     expect(tables.get("provider_accounts")![0]).toMatchObject({
-      provider: "google",
-      provider_user_id: "google-sub-1",
+      provider: "linkedin",
+      provider_user_id: "linkedin-sub-1",
       user_type: "user",
     });
     expect(completeLogin).toHaveBeenCalledTimes(1);
-    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).get("email")).toBe(
-      "ada@example.com",
-    );
     expect(result.tokens.accessToken.token).toBe("t");
-  });
-
-  it("clears the state cookie without SameSite=None/Secure — query mode's cookie was never written with them", async () => {
-    const login = await startLogin();
-    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
-
-    const { response } = await callbackWithResponse(login.cookie.value, {
-      code: login.code,
-      state: login.state,
-    });
-
-    expect(response.clearCookie).toHaveBeenCalledWith(PROVIDER_STATE_COOKIE, { path: "/" });
   });
 
   it("rejects a state mismatch before any token exchange", async () => {
@@ -306,32 +261,11 @@ describe("completeProviderLogin (google)", () => {
     expect(completeLogin).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing or tampered state cookie", async () => {
-    const login = await startLogin();
-    const [payload, signature] = login.cookie.value.split(".");
-    const forgedPayload = Buffer.from(
-      JSON.stringify({
-        ...JSON.parse(Buffer.from(defined(payload, "cookie payload"), "base64url").toString()),
-        state: "attacker",
-      }),
-    ).toString("base64url");
-
-    for (const cookie of [undefined, `${forgedPayload}.${signature}`]) {
-      const error = await callback(cookie, { code: login.code, state: "attacker" }).catch((e) => e);
-
-      expect(error).toBeInstanceOf(InvalidProviderCallbackError);
-      expect(error.reason).toBe("missing-or-invalid-state-cookie");
-    }
-
-    expect(tokenEndpoint.calls).toHaveLength(0);
-  });
-
   it("rejects when the code was bound to another login's PKCE challenge", async () => {
     const victim = await startLogin();
     const attacker = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(attacker.nonce));
 
-    // attacker's own cookie + state, but a code issued for the victim's challenge
     const error = await callback(attacker.cookie.value, {
       code: victim.code,
       state: attacker.state,
@@ -356,17 +290,12 @@ describe("completeProviderLogin (google)", () => {
   });
 
   it.each([
-    ["a wrong audience", { audience: "someone-else.apps.googleusercontent.com" }],
+    ["a wrong audience", { audience: "someone-else" }],
     ["a wrong issuer", { issuer: "https://evil.example.com" }],
     ["an expired token", { expiresAt: Math.floor(Date.now() / 1000) - 3600 }],
-    ["a signature from an unknown key", { key: undefined as unknown as CryptoKey, foreign: true }],
   ])("rejects an id_token with %s", async (_label, options) => {
     const login = await startLogin();
-    const { foreign, ...signOptions } = options as { foreign?: boolean };
-    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce), {
-      ...signOptions,
-      ...(foreign ? { key: foreignKey } : {}),
-    });
+    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce), options);
 
     const error = await callback(login.cookie.value, {
       code: login.code,
@@ -407,29 +336,5 @@ describe("completeProviderLogin (google)", () => {
     expect(tables.get("users")).toHaveLength(1);
     expect(defined(tables.get("provider_accounts")?.[0], "row").user_id).toBe(existing.id);
     expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(existing.id);
-  });
-
-  it("an existing link resolves the user by provider id, whatever the email says now", async () => {
-    const linked = await User.create({ email: "old@example.com" });
-    tables.set("provider_accounts", [
-      {
-        id: 900,
-        provider: "google",
-        provider_user_id: "google-sub-1",
-        user_id: linked.id,
-        user_type: "user",
-      },
-    ]);
-    const login = await startLogin();
-    tokenEndpoint.idToken = await idToken({
-      ...verifiedClaims(login.nonce),
-      email: "new@example.com",
-      email_verified: false,
-    });
-
-    await callback(login.cookie.value, { code: login.code, state: login.state });
-
-    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(linked.id);
-    expect(tables.get("users")).toHaveLength(1);
   });
 });

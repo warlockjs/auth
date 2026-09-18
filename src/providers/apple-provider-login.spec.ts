@@ -19,7 +19,10 @@ vi.mock("@warlock.js/logger", () => ({ log: { warn: vi.fn(), error: vi.fn() } })
 
 // The REAL jose, loaded from the workspace store (it is not linked into auth's
 // node_modules). Only `createRemoteJWKSet` is swapped, for a local key set, so
-// signature / iss / aud / exp checks all run through jose itself.
+// signature / iss / aud / exp checks on the id_token all run through jose
+// itself — and the client-secret JWT this provider signs is verified below
+// with `jose.jwtVerify` against the matching public key, so the ES256 signer
+// is proven too, not just format-checked.
 vi.mock("jose", async () => {
   const { readdirSync } = await import("node:fs");
   const { resolve } = await import("node:path");
@@ -28,7 +31,7 @@ vi.mock("jose", async () => {
   const entry = readdirSync(store).find((name) => name.startsWith("jose@"));
 
   if (!entry) {
-    throw new Error(`google-provider-login.spec needs jose under ${store} to sign test id_tokens.`);
+    throw new Error(`apple-provider-login.spec needs jose under ${store} to sign test id_tokens.`);
   }
 
   const real = await import(
@@ -61,14 +64,24 @@ class User extends InMemoryModel {
   }
 }
 
-const CLIENT_ID = "client-123.apps.googleusercontent.com";
-const ISSUER = "https://accounts.google.com";
+const CLIENT_ID = "com.example.app";
+const TEAM_ID = "TEAM1234AB";
+const KEY_ID = "KEY1234CD";
+const ISSUER = "https://appleid.apple.com";
 
-/** The jose surface these specs sign with. Loaded by a variable specifier: jose has no types in reach of auth. */
 type TestJose = {
-  generateKeyPair: (alg: string) => Promise<{ publicKey: CryptoKey; privateKey: CryptoKey }>;
+  generateKeyPair: (
+    alg: string,
+    options?: { extractable?: boolean },
+  ) => Promise<{ publicKey: CryptoKey; privateKey: CryptoKey }>;
   exportJWK: (key: CryptoKey) => Promise<Record<string, unknown>>;
+  exportPKCS8: (key: CryptoKey) => Promise<string>;
   createLocalJWKSet: (jwks: { keys: Record<string, unknown>[] }) => unknown;
+  jwtVerify: (
+    token: string,
+    key: unknown,
+    options: { issuer: string; audience: string },
+  ) => Promise<{ payload: Record<string, unknown>; protectedHeader: Record<string, unknown> }>;
   SignJWT: new (claims: Record<string, unknown>) => {
     setProtectedHeader: (header: Record<string, unknown>) => TestJoseBuilder;
   };
@@ -85,18 +98,23 @@ type TestJoseBuilder = {
 const JOSE: string = "jose";
 
 let jose: TestJose;
-let signingKey: CryptoKey;
-let foreignKey: CryptoKey;
+let appleSigningKey: CryptoKey;
+let appPrivateKey: CryptoKey;
+let appPublicKey: CryptoKey;
+let appPrivateKeyPem: string;
 
 beforeAll(async () => {
   jose = (await import(JOSE)) as TestJose;
-  const pair = await jose.generateKeyPair("RS256");
-  const foreign = await jose.generateKeyPair("RS256");
-  signingKey = pair.privateKey;
-  foreignKey = foreign.privateKey;
 
-  const jwk = { ...(await jose.exportJWK(pair.publicKey)), kid: "k1", alg: "RS256" };
+  const applePair = await jose.generateKeyPair("ES256");
+  appleSigningKey = applePair.privateKey;
+  const jwk = { ...(await jose.exportJWK(applePair.publicKey)), kid: "k1", alg: "ES256" };
   keys.resolver = jose.createLocalJWKSet({ keys: [jwk] });
+
+  const appPair = await jose.generateKeyPair("ES256", { extractable: true });
+  appPrivateKey = appPair.privateKey;
+  appPublicKey = appPair.publicKey;
+  appPrivateKeyPem = await jose.exportPKCS8(appPrivateKey);
 });
 
 type Claims = Record<string, unknown>;
@@ -106,15 +124,14 @@ async function idToken(
   options: { key?: CryptoKey; audience?: string; issuer?: string; expiresAt?: number } = {},
 ) {
   return new jose.SignJWT(claims)
-    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setProtectedHeader({ alg: "ES256", kid: "k1" })
     .setIssuer(options.issuer ?? ISSUER)
     .setAudience(options.audience ?? CLIENT_ID)
     .setIssuedAt()
     .setExpirationTime(options.expiresAt ?? Math.floor(Date.now() / 1000) + 300)
-    .sign(options.key ?? signingKey);
+    .sign(options.key ?? appleSigningKey);
 }
 
-/** A Google token endpoint that, like Google, enforces PKCE against the challenge bound to the code. */
 const tokenEndpoint = {
   challengeForCode: new Map<string, string>(),
   idToken: "" as string,
@@ -143,10 +160,9 @@ function fakeRequest(cookie: string | undefined, query: Record<string, unknown>)
   };
 }
 
-/** Start a login and have "Google" issue a code bound to its PKCE challenge. */
 async function startLogin() {
   const response = fakeResponse();
-  const url = new URL(await startProviderLogin(response as never, "google"));
+  const url = new URL(await startProviderLogin(response as never, "apple"));
   const params = url.searchParams;
   const code = `code-${Math.random()}`;
 
@@ -166,7 +182,7 @@ async function callback(cookie: string | undefined, query: Record<string, unknow
 
   return completeProviderLogin(
     User as never,
-    "google",
+    "apple",
     fakeRequest(cookie, query) as never,
     response as never,
   );
@@ -178,7 +194,7 @@ async function callbackWithResponse(cookie: string | undefined, query: Record<st
 
   const result = await completeProviderLogin(
     User as never,
-    "google",
+    "apple",
     fakeRequest(cookie, query) as never,
     response as never,
   );
@@ -191,10 +207,12 @@ beforeEach(() => {
   for (const key of Object.keys(configValues)) delete configValues[key];
   Object.assign(configValues, {
     "auth.accessToken.secret": "test-secret",
-    "auth.providers.google": {
+    "auth.providers.apple": {
       clientId: CLIENT_ID,
-      clientSecret: "shh",
-      redirectUri: "https://app.test/auth/google/callback",
+      teamId: TEAM_ID,
+      keyId: KEY_ID,
+      privateKey: appPrivateKeyPem,
+      redirectUri: "https://app.test/auth/apple/callback",
     },
   });
 
@@ -231,36 +249,50 @@ afterEach(() => {
 });
 
 const verifiedClaims = (nonce: string): Claims => ({
-  sub: "google-sub-1",
-  email: "ada@example.com",
+  sub: "apple-sub-1",
+  email: "ada@privaterelay.appleid.com",
   email_verified: true,
-  name: "Ada",
   nonce,
 });
 
-describe("startProviderLogin (google)", () => {
-  it("redirects with state, nonce and an S256 PKCE challenge, and stores them in a short-lived signed cookie", async () => {
+describe("startProviderLogin (apple)", () => {
+  it("redirects with state, nonce, an S256 PKCE challenge and form_post (name/email were requested), and stores the state in a short-lived signed cookie", async () => {
     const { url, cookie } = await startLogin();
 
-    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.origin + url.pathname).toBe("https://appleid.apple.com/auth/authorize");
     expect(url.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("scope")).toBe("openid email profile");
+    expect(url.searchParams.get("scope")).toBe("name email");
+    expect(url.searchParams.get("response_mode")).toBe("form_post");
     expect(cookie.options).toMatchObject({ raw: true, path: "/", maxAge: 600 });
-    // Google's callback is a top-level GET redirect — no SameSite/Secure override, unlike Apple's form_post.
-    expect(cookie.options).not.toHaveProperty("sameSite");
-    expect(cookie.options).not.toHaveProperty("secure");
-    // The verifier itself never appears in the URL.
-    expect(url.toString()).not.toContain(
-      JSON.parse(
-        Buffer.from(defined(cookie.value.split(".")[0], "cookie payload"), "base64url").toString(),
-      ).codeVerifier,
-    );
+  });
+
+  it("writes the state cookie SameSite=None; Secure — a Lax cookie is dropped on Apple's cross-site form_post callback", async () => {
+    const { cookie } = await startLogin();
+
+    expect(cookie.options).toMatchObject({ sameSite: "none", secure: true });
   });
 });
 
-describe("completeProviderLogin (google)", () => {
-  it("exchanges the code with the cookie's PKCE verifier, verifies the id_token, creates + links a verified user, and finishes through completeLogin", async () => {
+describe("completeProviderLogin (apple)", () => {
+  it("signs a real ES256 client-secret JWT (iss=teamId, sub=clientId, aud=Apple, kid=keyId) that verifies against the app's own public key", async () => {
+    const login = await startLogin();
+    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
+
+    await callback(login.cookie.value, { code: login.code, state: login.state });
+
+    const clientSecret = defined(tokenEndpoint.calls[0], "token call").get("client_secret")!;
+    const { payload, protectedHeader } = await jose.jwtVerify(clientSecret, appPublicKey, {
+      issuer: TEAM_ID,
+      audience: ISSUER,
+    });
+
+    expect(protectedHeader.alg).toBe("ES256");
+    expect(protectedHeader.kid).toBe(KEY_ID);
+    expect(payload.sub).toBe(CLIENT_ID);
+  });
+
+  it("exchanges the code with the cookie's PKCE verifier, verifies the id_token, creates + links a verified user (private-relay email included), and finishes through completeLogin", async () => {
     const login = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
 
@@ -268,29 +300,40 @@ describe("completeProviderLogin (google)", () => {
 
     expect(tokenEndpoint.calls).toHaveLength(1);
     expect(tables.get("users")).toHaveLength(1);
-    expect(tables.get("users")![0]).toMatchObject({ email: "ada@example.com", name: "Ada" });
+    expect(tables.get("users")![0]).toMatchObject({ email: "ada@privaterelay.appleid.com" });
     expect(tables.get("provider_accounts")![0]).toMatchObject({
-      provider: "google",
-      provider_user_id: "google-sub-1",
+      provider: "apple",
+      provider_user_id: "apple-sub-1",
       user_type: "user",
     });
     expect(completeLogin).toHaveBeenCalledTimes(1);
-    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).get("email")).toBe(
-      "ada@example.com",
-    );
     expect(result.tokens.accessToken.token).toBe("t");
   });
 
-  it("clears the state cookie without SameSite=None/Secure — query mode's cookie was never written with them", async () => {
+  it("reads the account name from the form_post `user` field, present only on the first authorization", async () => {
     const login = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
 
-    const { response } = await callbackWithResponse(login.cookie.value, {
+    await callback(login.cookie.value, {
       code: login.code,
       state: login.state,
+      user: JSON.stringify({ name: { firstName: "Ada", lastName: "Lovelace" } }),
     });
 
-    expect(response.clearCookie).toHaveBeenCalledWith(PROVIDER_STATE_COOKIE, { path: "/" });
+    expect(tables.get("users")![0]).toMatchObject({ name: "Ada Lovelace" });
+  });
+
+  it('accepts Apple\'s string-form `email_verified: "true"`, not only the JSON boolean', async () => {
+    const login = await startLogin();
+    tokenEndpoint.idToken = await idToken({
+      ...verifiedClaims(login.nonce),
+      email_verified: "true",
+    });
+
+    await callback(login.cookie.value, { code: login.code, state: login.state });
+
+    expect(tables.get("users")).toHaveLength(1);
+    expect(completeLogin).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a state mismatch before any token exchange", async () => {
@@ -306,32 +349,11 @@ describe("completeProviderLogin (google)", () => {
     expect(completeLogin).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing or tampered state cookie", async () => {
-    const login = await startLogin();
-    const [payload, signature] = login.cookie.value.split(".");
-    const forgedPayload = Buffer.from(
-      JSON.stringify({
-        ...JSON.parse(Buffer.from(defined(payload, "cookie payload"), "base64url").toString()),
-        state: "attacker",
-      }),
-    ).toString("base64url");
-
-    for (const cookie of [undefined, `${forgedPayload}.${signature}`]) {
-      const error = await callback(cookie, { code: login.code, state: "attacker" }).catch((e) => e);
-
-      expect(error).toBeInstanceOf(InvalidProviderCallbackError);
-      expect(error.reason).toBe("missing-or-invalid-state-cookie");
-    }
-
-    expect(tokenEndpoint.calls).toHaveLength(0);
-  });
-
   it("rejects when the code was bound to another login's PKCE challenge", async () => {
     const victim = await startLogin();
     const attacker = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(attacker.nonce));
 
-    // attacker's own cookie + state, but a code issued for the victim's challenge
     const error = await callback(attacker.cookie.value, {
       code: victim.code,
       state: attacker.state,
@@ -356,17 +378,12 @@ describe("completeProviderLogin (google)", () => {
   });
 
   it.each([
-    ["a wrong audience", { audience: "someone-else.apps.googleusercontent.com" }],
+    ["a wrong audience", { audience: "someone-else" }],
     ["a wrong issuer", { issuer: "https://evil.example.com" }],
     ["an expired token", { expiresAt: Math.floor(Date.now() / 1000) - 3600 }],
-    ["a signature from an unknown key", { key: undefined as unknown as CryptoKey, foreign: true }],
   ])("rejects an id_token with %s", async (_label, options) => {
     const login = await startLogin();
-    const { foreign, ...signOptions } = options as { foreign?: boolean };
-    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce), {
-      ...signOptions,
-      ...(foreign ? { key: foreignKey } : {}),
-    });
+    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce), options);
 
     const error = await callback(login.cookie.value, {
       code: login.code,
@@ -379,7 +396,7 @@ describe("completeProviderLogin (google)", () => {
   });
 
   it("never links or creates on an UNVERIFIED provider email — not even to an existing account with that email", async () => {
-    await User.create({ email: "ada@example.com" });
+    await User.create({ email: "ada@privaterelay.appleid.com" });
     const login = await startLogin();
     tokenEndpoint.idToken = await idToken({
       ...verifiedClaims(login.nonce),
@@ -397,8 +414,23 @@ describe("completeProviderLogin (google)", () => {
     expect(completeLogin).not.toHaveBeenCalled();
   });
 
+  it("clears the state cookie SameSite=None; Secure — the same attrs it was written with, or the browser ignores the clear on Apple's form_post callback", async () => {
+    const login = await startLogin();
+    tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
+
+    const { response } = await callbackWithResponse(login.cookie.value, {
+      code: login.code,
+      state: login.state,
+    });
+
+    expect(response.clearCookie).toHaveBeenCalledWith(
+      PROVIDER_STATE_COOKIE,
+      expect.objectContaining({ path: "/", sameSite: "none", secure: true }),
+    );
+  });
+
   it("links a verified email to the existing account instead of creating one", async () => {
-    const existing = await User.create({ email: "ada@example.com" });
+    const existing = await User.create({ email: "ada@privaterelay.appleid.com" });
     const login = await startLogin();
     tokenEndpoint.idToken = await idToken(verifiedClaims(login.nonce));
 
@@ -407,29 +439,5 @@ describe("completeProviderLogin (google)", () => {
     expect(tables.get("users")).toHaveLength(1);
     expect(defined(tables.get("provider_accounts")?.[0], "row").user_id).toBe(existing.id);
     expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(existing.id);
-  });
-
-  it("an existing link resolves the user by provider id, whatever the email says now", async () => {
-    const linked = await User.create({ email: "old@example.com" });
-    tables.set("provider_accounts", [
-      {
-        id: 900,
-        provider: "google",
-        provider_user_id: "google-sub-1",
-        user_id: linked.id,
-        user_type: "user",
-      },
-    ]);
-    const login = await startLogin();
-    tokenEndpoint.idToken = await idToken({
-      ...verifiedClaims(login.nonce),
-      email: "new@example.com",
-      email_verified: false,
-    });
-
-    await callback(login.cookie.value, { code: login.code, state: login.state });
-
-    expect((defined(completeLogin.mock.calls[0], "first call")[0] as User).id).toBe(linked.id);
-    expect(tables.get("users")).toHaveLength(1);
   });
 });

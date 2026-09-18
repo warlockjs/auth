@@ -43,6 +43,14 @@ export type ProviderProfile = {
  */
 export interface AuthProvider {
   readonly name: string;
+  /**
+   * How the provider's callback arrives. `"query"` (default) is a top-level
+   * GET redirect, safe for a `SameSite=Lax` state cookie. `"form_post"` is a
+   * cross-site POST (Apple, when `name`/`email` scopes are requested) — the
+   * state cookie needs `SameSite=None; Secure` to survive it.
+   * @default "query"
+   */
+  readonly callbackMode?: "query" | "form_post";
   /** The URL to send the browser to. */
   authorizationUrl(state: ProviderAuthorizationState): string | Promise<string>;
   /** Exchange the callback for a verified profile, or throw. */
@@ -59,6 +67,72 @@ export type GoogleProviderConfig = {
   scopes?: string[];
 };
 
+/** `auth.providers.github`. */
+export type GitHubProviderConfig = {
+  clientId: string;
+  clientSecret: string;
+  /** Must exactly match the "Authorization callback URL" registered on the GitHub OAuth App. */
+  redirectUri: string;
+  /** @default ["read:user", "user:email"] */
+  scopes?: string[];
+};
+
+/** `auth.providers.discord`. */
+export type DiscordProviderConfig = {
+  clientId: string;
+  clientSecret: string;
+  /** Must exactly match a redirect registered on the Discord application. */
+  redirectUri: string;
+  /** @default ["identify", "email"] */
+  scopes?: string[];
+};
+
+/** `auth.providers.linkedin`. */
+export type LinkedInProviderConfig = {
+  clientId: string;
+  clientSecret: string;
+  /** Must exactly match a redirect URL registered on the LinkedIn app. */
+  redirectUri: string;
+  /** @default ["openid", "profile", "email"] */
+  scopes?: string[];
+};
+
+/** `auth.providers.apple`. */
+export type AppleProviderConfig = {
+  /** The Services ID (or app id) registered with Sign in with Apple. */
+  clientId: string;
+  /** The Apple Developer team id — signed into the client-secret JWT as `iss`. */
+  teamId: string;
+  /** The id of the private key created for Sign in with Apple — signed into the client-secret JWT header as `kid`. */
+  keyId: string;
+  /** The PKCS8 PEM contents of that private key (`.p8` file), used to sign the client-secret JWT. */
+  privateKey: string;
+  /** Must exactly match a return URL registered on the Services ID. */
+  redirectUri: string;
+  /** @default ["name", "email"] */
+  scopes?: string[];
+};
+
+/** `auth.providers.facebook`. */
+export type FacebookProviderConfig = {
+  clientId: string;
+  clientSecret: string;
+  /** Must exactly match a valid OAuth redirect URI registered on the Facebook app. */
+  redirectUri: string;
+  /** @default ["email", "public_profile"] */
+  scopes?: string[];
+};
+
+/** `auth.providers.x`. */
+export type XProviderConfig = {
+  clientId: string;
+  clientSecret: string;
+  /** Must exactly match a callback URI registered on the X app (confidential client). */
+  redirectUri: string;
+  /** @default ["tweet.read", "users.read"] */
+  scopes?: string[];
+};
+
 /** Creates the app user for a verified provider profile with no matching account. */
 export type ProviderUserCreator = (
   profile: ProviderProfile,
@@ -68,6 +142,12 @@ export type ProviderUserCreator = (
 /** `auth.providers`. */
 export type ProvidersConfig = {
   google?: GoogleProviderConfig;
+  github?: GitHubProviderConfig;
+  discord?: DiscordProviderConfig;
+  linkedin?: LinkedInProviderConfig;
+  apple?: AppleProviderConfig;
+  facebook?: FacebookProviderConfig;
+  x?: XProviderConfig;
   /**
    * User attribute a verified provider email is matched against.
    * @default "email"

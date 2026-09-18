@@ -32,6 +32,7 @@ vi.mock("./auth.service", () => ({ authService: { completeLogin: vi.fn() } }));
 import { AuthProviderSdkMissingError } from "../errors/auth-provider-sdk-missing.error";
 import { generatePasskeyAuthenticationOptions } from "../passkeys/passkey-authentication";
 import { GoogleProvider } from "../providers/google-provider";
+import { LinkedInProvider } from "../providers/linkedin-provider";
 import { loadOptionalPeer } from "./optional-peer";
 
 describe("login methods without their optional SDK", () => {
@@ -50,6 +51,25 @@ describe("login methods without their optional SDK", () => {
     expect(error).toBeInstanceOf(AuthProviderSdkMissingError);
     expect(error.message).toContain('"jose"');
     expect(error.message).toContain("warlock add auth-google");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("LinkedIn throws AuthProviderSdkMissingError naming jose and `warlock add auth-linkedin`, before any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const provider = new LinkedInProvider({
+      clientId: "c",
+      clientSecret: "s",
+      redirectUri: "https://app.test/cb",
+    });
+    const expected = { state: "s", nonce: "n", codeVerifier: "v" };
+    const error = await provider.handleCallback({ query: { code: "x" }, expected }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(AuthProviderSdkMissingError);
+    expect(error.message).toContain('"jose"');
+    expect(error.message).toContain("warlock add auth-linkedin");
     expect(fetchSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });

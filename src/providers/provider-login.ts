@@ -6,20 +6,68 @@ import { InvalidProviderCallbackError } from "../errors/invalid-provider-callbac
 import type { Auth } from "../models/auth.model";
 import { authConfig } from "../services/auth-config";
 import { authService } from "../services/auth.service";
+import { AppleProvider } from "./apple-provider";
+import { DiscordProvider } from "./discord-provider";
+import { FacebookProvider } from "./facebook-provider";
+import { GitHubProvider } from "./github-provider";
 import { GoogleProvider } from "./google-provider";
+import { LinkedInProvider } from "./linkedin-provider";
+import { XProvider } from "./x-provider";
 import { safeEqual } from "../utils/safe-equal";
 import { randomUrlSafe, takeProviderState, writeProviderState } from "./provider-state-cookie";
 import { resolveProviderUser } from "./resolve-provider-user";
 
+/** Providers auth ships, by name — each built from `auth.providers.<name>`. */
+const BUILT_IN_PROVIDERS: Record<string, (name: string) => AuthProvider | undefined> = {
+  google: () => {
+    const google = authConfig.providers.google();
+
+    return google ? new GoogleProvider(google) : undefined;
+  },
+  github: () => {
+    const github = authConfig.providers.github();
+
+    return github ? new GitHubProvider(github) : undefined;
+  },
+  discord: () => {
+    const discord = authConfig.providers.discord();
+
+    return discord ? new DiscordProvider(discord) : undefined;
+  },
+  linkedin: () => {
+    const linkedin = authConfig.providers.linkedin();
+
+    return linkedin ? new LinkedInProvider(linkedin) : undefined;
+  },
+  apple: () => {
+    const apple = authConfig.providers.apple();
+
+    return apple ? new AppleProvider(apple) : undefined;
+  },
+  facebook: () => {
+    const facebook = authConfig.providers.facebook();
+
+    return facebook ? new FacebookProvider(facebook) : undefined;
+  },
+  x: () => {
+    const x = authConfig.providers.x();
+
+    return x ? new XProvider(x) : undefined;
+  },
+};
+
 /**
- * Resolve a provider by name: `google` from `auth.providers.google`, anything
+ * Resolve a provider by name: a built-in name (`google`, `github`, `discord`,
+ * `linkedin`, `apple`, `facebook`, `x`) from `auth.providers.<name>`, anything
  * else from `auth.providers.custom`. Throws naming the config key when absent.
  */
 export function resolveAuthProvider(name: string): AuthProvider {
-  if (name === "google") {
-    const google = authConfig.providers.google();
+  const isBuiltIn = Object.hasOwn(BUILT_IN_PROVIDERS, name);
 
-    if (google) return new GoogleProvider(google);
+  if (isBuiltIn) {
+    const provider = BUILT_IN_PROVIDERS[name]!(name);
+
+    if (provider) return provider;
   } else {
     const custom = authConfig.providers.custom(name);
 
@@ -28,7 +76,7 @@ export function resolveAuthProvider(name: string): AuthProvider {
 
   throw new Error(
     `@warlock.js/auth: no login provider "${name}" — configure \`auth.providers.${
-      name === "google" ? "google" : `custom.${name}`
+      isBuiltIn ? name : `custom.${name}`
     }\`.`,
   );
 }
@@ -57,7 +105,7 @@ export async function startProviderLogin(
 
   const url = await provider.authorizationUrl(state);
 
-  writeProviderState(response, provider.name, state);
+  writeProviderState(response, provider.name, state, provider.callbackMode ?? "query");
 
   return url;
 }
@@ -100,6 +148,8 @@ export async function completeProviderLogin<T extends Auth>(
     code: request.input("code"),
     state: request.input("state"),
     error: request.input("error"),
+    // Apple's form_post callback carries the account name here, on the first authorization only.
+    user: request.input("user"),
   };
 
   if (query.error) {

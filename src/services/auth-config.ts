@@ -10,11 +10,17 @@ import type {
   PasswordSetter,
 } from "../contracts/types";
 import type {
+  AppleProviderConfig,
   AuthProvider,
+  DiscordProviderConfig,
+  FacebookProviderConfig,
+  GitHubProviderConfig,
   GoogleProviderConfig,
+  LinkedInProviderConfig,
   OtpSender,
   PasskeysConfig,
   ProviderUserCreator,
+  XProviderConfig,
 } from "../contracts/providers";
 import type { Auth } from "../models/auth.model";
 
@@ -222,9 +228,25 @@ export const authConfig = {
   providers: {
     /** `auth.providers.google`, when configured. */
     google: (): GoogleProviderConfig | undefined => config.key("auth.providers.google"),
+    /** `auth.providers.github`, when configured. */
+    github: (): GitHubProviderConfig | undefined => config.key("auth.providers.github"),
+    /** `auth.providers.discord`, when configured. */
+    discord: (): DiscordProviderConfig | undefined => config.key("auth.providers.discord"),
+    /** `auth.providers.linkedin`, when configured. */
+    linkedin: (): LinkedInProviderConfig | undefined => config.key("auth.providers.linkedin"),
+    /** `auth.providers.apple`, when configured. */
+    apple: (): AppleProviderConfig | undefined => config.key("auth.providers.apple"),
+    /** `auth.providers.facebook`, when configured. */
+    facebook: (): FacebookProviderConfig | undefined => config.key("auth.providers.facebook"),
+    /** `auth.providers.x`, when configured. */
+    x: (): XProviderConfig | undefined => config.key("auth.providers.x"),
     /** An app-registered provider under `auth.providers.custom.<name>`. */
-    custom: (name: string): AuthProvider | undefined =>
-      config.key<Record<string, AuthProvider>>("auth.providers.custom", {})[name],
+    custom: (name: string): AuthProvider | undefined => {
+      const providers = config.key<Record<string, AuthProvider>>("auth.providers.custom", {});
+
+      // Own keys only: `name` arrives from a URL, and "constructor" must not resolve to Object.
+      return Object.hasOwn(providers, name) ? providers[name] : undefined;
+    },
     /** User attribute a verified provider email is matched against. @default "email" */
     emailField: (): string => config.key("auth.providers.emailField", "email"),
     /** App-owned user creation for a first provider login. */
