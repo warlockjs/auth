@@ -7,12 +7,26 @@ description: 'Sign up a new user and issue the initial token pair — User.creat
 
 Two-step on the server: create the user (with hashed password), then issue tokens. Cascade handles the persistence; `authService` handles the tokens.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## The minimal shape
 
 ```ts
 import { authService } from "@warlock.js/auth";
 import { hashPassword, type RequestHandler } from "@warlock.js/core";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export const registerController: RequestHandler = async ({ request, response }) => {
   const { email, password, name } = request.all();

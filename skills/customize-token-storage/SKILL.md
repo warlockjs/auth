@@ -9,6 +9,20 @@ The package ships `AccessToken` and `RefreshToken` models and runs the whole tok
 
 Reach for this when you need an extra column on the token tables — the common case is a tenant key (`organization_id`) so tokens are partitioned per organization, or richer device metadata.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## The three pieces
 
 A storage override is always three coordinated steps. Miss any one and it breaks — see the strict-mode note below.
@@ -41,9 +55,33 @@ export class AppAccessToken extends AccessToken {
 
 Refresh tokens follow the same shape — extend `refreshTokenSchema`, and override `issue(user, token, options)` (`options` is `{ familyId, expiresAt, deviceInfo? }`) the same way, copying the base fields plus your column.
 
+```ts title="src/app/auth/models/app-refresh-token.ts"
+import { RefreshToken, refreshTokenSchema, type Auth, type RefreshTokenIssueOptions } from "@warlock.js/auth";
+import { v } from "@warlock.js/seal";
+
+export class AppRefreshToken extends RefreshToken {
+  public static schema = refreshTokenSchema.extend({
+    organization_id: v.string().exists("Organization", { column: "id" }),
+  });
+
+  public static issue(user: Auth, token: string, options: RefreshTokenIssueOptions) {
+    return this.create({
+      token,
+      user_id: user.id,
+      user_type: user.userType,
+      family_id: options.familyId,
+      expires_at: options.expiresAt,
+      organization_id: user.get("organization_id"),
+    });
+  }
+}
+```
+
 ### 2. Register the subclass in config
 
 ```ts title="src/config/auth.ts"
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
 import { AppAccessToken } from "app/auth/models/app-access-token";
 import { AppRefreshToken } from "app/auth/models/app-refresh-token";
 

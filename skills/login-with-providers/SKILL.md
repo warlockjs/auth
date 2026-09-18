@@ -19,6 +19,7 @@ authService.setAuthCookie(response, tokens.accessToken); // cookie session, or r
 | Method | Command | Installs |
 | --- | --- | --- |
 | Google | `warlock add auth-google` | `jose` |
+| Apple | `warlock add auth-apple` | `jose` |
 | Passkeys | `warlock add auth-passkeys` | `@simplewebauthn/server` (add `@simplewebauthn/browser` to your client bundle) |
 | Phone code | `warlock add notifications` + your own `sms`/`whatsapp` channel | nothing else. Auth ships no SMS/WhatsApp driver |
 
@@ -62,6 +63,98 @@ Client side, the button is just a link. It must be a top-level navigation, not a
 - The callback rejects, with `InvalidProviderCallbackError` (400, `EC009`): a missing, forged or expired cookie, a `state` mismatch, a `?error=` from Google, a failed code exchange, and an id_token with a bad signature, `iss`, `aud`, `exp` or `nonce`. `error.reason` says which. The response message is generic.
 - **Linking.** An existing `provider_accounts` row (provider plus Google `sub`) always decides the user. Without one, the Google email must be verified (`email_verified: true`), or the call throws `ProviderEmailNotVerifiedError` (403, `EC010`) and nothing is linked or created. A verified email links the matching user, or creates one with `{ email, name, emailVerifiedAt: now }`.
 - Other OIDC providers: implement `AuthProvider` (`authorizationUrl(state)`, `handleCallback({ query, expected })`) and register it under `auth.providers.custom.<name>`.
+
+## Apple
+
+```ts
+// src/config/auth.ts
+providers: {
+  apple: {
+    clientId: env("APPLE_CLIENT_ID"), // the Services ID
+    teamId: env("APPLE_TEAM_ID"),
+    keyId: env("APPLE_KEY_ID"),
+    privateKey: env("APPLE_PRIVATE_KEY"), // the .p8 file's PKCS8 PEM contents
+    redirectUri: `${env("APP_URL")}/auth/apple/callback`,
+    // scopes: ["name", "email"],
+  },
+},
+```
+
+```ts
+router.get("/auth/apple", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "apple")),
+);
+
+// Apple POSTs the callback (form_post) when name/email scopes are requested —
+// this route must accept a POST body, not just a query string.
+router.post("/auth/apple/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "apple", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- Apple has no static client secret: a fresh ES256 JWT (`iss` = team id, `sub` = client id, `aud` = Apple, `kid` = key id) is signed with your `.p8` private key on every callback.
+- The account name arrives only on the **first** authorization, as a `user` form field (`{"name":{"firstName","lastName"}}`) — save it then, since later logins never send it again.
+- The email may be a private-relay address (`@privaterelay.appleid.com`); it is still a real, working address and is accepted like any other.
+- Same rejections and linking rules as Google, through `InvalidProviderCallbackError` / `ProviderEmailNotVerifiedError`.
+- Apple's `form_post` callback is a cross-site POST, so its state cookie is written `SameSite=None; Secure` instead of the usual `Lax` — a browser drops a `Lax` cookie there. `Secure` needs HTTPS: Apple requires it in production anyway, and for local dev you need `https://` or `http://localhost` (browsers treat `localhost` as a secure context even over plain http).
+
+## Facebook
+
+```ts
+providers: {
+  facebook: {
+    clientId: env("FACEBOOK_CLIENT_ID"),
+    clientSecret: env("FACEBOOK_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/facebook/callback`,
+    // scopes: ["email", "public_profile"],
+  },
+},
+```
+
+```ts
+router.get("/auth/facebook", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "facebook")),
+);
+
+router.get("/auth/facebook/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "facebook", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- Plain OAuth 2 (no `id_token`); the profile comes from Graph `/me?fields=id,name,email,picture`. Facebook only ever returns a confirmed address, so a present `email` counts as verified.
+- An app without the `email` permission granted (or a user with none on file) gets no email — the same missing/unverified path as every other provider, never an invented address.
+
+## X (Twitter)
+
+```ts
+providers: {
+  x: {
+    clientId: env("X_CLIENT_ID"),
+    clientSecret: env("X_CLIENT_SECRET"),
+    redirectUri: `${env("APP_URL")}/auth/x/callback`,
+    // scopes: ["tweet.read", "users.read"],
+  },
+},
+```
+
+```ts
+router.get("/auth/x", async ({ response }) =>
+  response.redirect(await startProviderLogin(response, "x")),
+);
+
+router.get("/auth/x/callback", async ({ request, response }) => {
+  const { tokens } = await completeProviderLogin(User, "x", request, response);
+  authService.setAuthCookie(response, tokens.accessToken);
+  return response.redirect("/");
+});
+```
+
+- OAuth 2 with PKCE, plus HTTP Basic auth (`client_id:client_secret`) at the token endpoint for the confidential client — X requires both together.
+- X's `/2/users/me` never returns an email address at all. `email` is always `undefined`; a first login therefore always needs an existing `provider_accounts` link (create one another way first) or it is rejected the same as any missing email — X gives auth no way to invent or infer one.
 
 ## Passkeys
 

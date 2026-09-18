@@ -7,12 +7,26 @@ description: 'Run the full login flow via authService.login(Model, credentials, 
 
 `authService` exposes the full flow. Pass the model class so the service knows which user-type to look up.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## Login — `authService.login(Model, credentials, deviceInfo?)`
 
 ```ts
 import { authService } from "@warlock.js/auth";
 import { type RequestHandler } from "@warlock.js/core";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export const loginController: RequestHandler = async ({ request, response }) => {
   const result = await authService.login(User, {

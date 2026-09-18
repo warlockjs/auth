@@ -27,6 +27,20 @@ npm install @warlock.js/auth
 
 ## Minimal wire-up
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ```ts title="warlock.config.ts"
 import {
   authMigrations,
@@ -49,7 +63,8 @@ export default defineConfig({
 ```
 
 ```ts title="src/config/auth.ts"
-import { User } from "@/app/users/models/user.model";
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
 
 export default {
   userType: {

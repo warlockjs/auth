@@ -7,12 +7,31 @@ description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argum
 
 `authMiddleware(allowedUserType: string | string[])` returns a Warlock middleware. Attach it to routes or route groups. The argument is **required** — there is no anonymous/optional mode. A request without a valid access token is always rejected with `401`; public routes simply omit the middleware.
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ## Two modes
 
 Middleware is attached via the route's `options.middleware` array (the third argument) — never as a positional argument.
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
 import { authMiddleware } from "@warlock.js/auth";
+
+const accountController: RequestHandler = async ({ response }) => response.success({});
+const adminController: RequestHandler = async ({ response }) => response.success({});
+const staffController: RequestHandler = async ({ response }) => response.success({});
 
 // Mode 1 — required, any user type
 //   Rejects with 401 if no valid token; any authenticated user passes.
@@ -65,6 +84,8 @@ By default every auth failure — API or page — returns the JSON `401` above. 
 Opt into a redirect with `auth.pageAuth` (5.8+). Set `loginPath` and a guarded **page** route (`route.isPage`) that a logged-out browser hits redirects to `loginPath?returnUrl=<original path>` instead of returning the JSON 401:
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   pageAuth: {
@@ -86,11 +107,21 @@ The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthCo
 
 ## Reading the user in a controller
 
+`request.locals.user` types as `RequestUser` — an empty interface by default. Narrow it once, app-wide, via module augmentation so it carries your model's shape:
+
+```ts title="src/app/users/request-user.ts"
+import type { User } from "app/users/models/user/user.model";
+
+declare module "@warlock.js/auth" {
+  interface RequestUser extends User {}
+}
+```
+
 ```ts
 import { type RequestHandler } from "@warlock.js/core";
 
 export const accountController: RequestHandler = async ({ request, response }) => {
-  const user = request.locals.user!;          // typed via your Auth subclass
+  const user = request.locals.user!;          // typed via the RequestUser augmentation above
   return response.success({
     id: user.id,
     email: user.get("email"),
@@ -153,17 +184,26 @@ That last one is the difference between a role check and an authorization model:
 Install [`@warlock.js/access`](@warlock.js/access/overview/SKILL.md) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
+import { authMiddleware } from "@warlock.js/auth";
 import { gate, can, definePolicy } from "@warlock.js/access";
+import { User } from "app/users/models/user/user.model";
+
+const articlesController: RequestHandler = async ({ request, response }) => {
+  // Who-may-act-on-whom: an ABAC policy on top of the RBAC grant
+  definePolicy("users.create", (actor, target, ctx) =>
+    ctx.hasRole("superAdmin") || (target as User).userType === "teacher",
+  );
+
+  if (await can(request.locals.user!, "users.create", { resource: request.body })) {
+    /* ... */
+  }
+
+  return response.success({});
+};
 
 // Permission-based route gate, in place of a user-type gate
 router.post("/articles", articlesController, { middleware: [authMiddleware([]), gate("articles.create")] });
-
-// Who-may-act-on-whom: an ABAC policy on top of the RBAC grant
-definePolicy("users.create", (actor, target, ctx) =>
-  ctx.hasRole("superAdmin") || (target as User).userType === "teacher",
-);
-
-if (await can(request.locals.user, "users.create", { resource: payload })) { /* ... */ }
 ```
 
 Use `authMiddleware` to establish *who the caller is*, and `access` to decide *what they may do*. They compose — `access` reads the user `authMiddleware` put on the request.
@@ -185,15 +225,30 @@ A route is header-only or cookie-only, never both — `tokenFrom` accepts exactl
 Reading a cookie is opt-in per route (above); *writing* one is a separate, explicit step your login/logout controller calls — `authService.login`/`logout` never set cookies implicitly, so upgrading never starts emitting `Set-Cookie` for an existing bearer-only app.
 
 ```ts
+import { type RequestHandler } from "@warlock.js/core";
 import { authService } from "@warlock.js/auth";
+import { User } from "app/users/models/user/user.model";
 
-// after issuing tokens
-const { user, tokens } = await authService.login(User, credentials);
-authService.setAuthCookie(response, tokens.accessToken); // Max-Age derived from tokens.accessToken.expiresAt
+export const loginController: RequestHandler = async ({ request, response }) => {
+  const result = await authService.login(User, {
+    email: request.input("email"),
+    password: request.input("password"),
+  });
+  if (!result) return response.unauthorized({ error: "Invalid credentials" });
 
-// after revoking tokens
-await authService.logout(user, accessToken, refreshToken);
-authService.clearAuthCookie(response);
+  const { user, tokens } = result;
+  authService.setAuthCookie(response, tokens.accessToken); // Max-Age derived from tokens.accessToken.expiresAt
+
+  return response.success({ id: user.id });
+};
+
+export const logoutController: RequestHandler = async ({ request, response }) => {
+  const user = request.locals.user!;
+  await authService.logout(user, request.header("authorization"));
+  authService.clearAuthCookie(response);
+
+  return response.success({});
+};
 ```
 
 `setAuthCookie(response, token, options?)` accepts either the raw token string or an `AccessTokenOutput` (`{ token, expiresAt }`, e.g. `tokens.accessToken` from `login`) — passing the latter derives `Max-Age` from `expiresAt` automatically; pass `options.maxAge` (seconds) to override it, or a bare string with no `maxAge` for a session cookie. `clearAuthCookie(response, options?)` clears it.
@@ -201,6 +256,8 @@ authService.clearAuthCookie(response);
 Cookie **attribute flags are not configurable** — `HttpOnly`, `SameSite=Lax`, and `Secure` outside development come from core's `secureCookieDefaults()`, the same floor every `response.cookie()` call gets. Only the cookie's `name` (default `"access_token"`) and `path` (default `"/"`) can be set, via `options` or the `auth.cookie` config block:
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   cookie: {
@@ -224,6 +281,8 @@ To close that gap, `authMiddleware` automatically runs a CSRF Origin check on ev
 - **Header-token auth is completely unaffected**, as are safe methods (`GET`/`HEAD`/`OPTIONS`) under cookie auth.
 
 ```ts title="src/config/auth.ts"
+import { User } from "app/users/models/user/user.model";
+
 export default {
   userType: { user: User },
   csrf: {

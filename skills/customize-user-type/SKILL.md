@@ -12,6 +12,14 @@ The `Auth` base class has a `userType` slot. Subclass it once per type, register
 ```ts title="src/app/users/models/user/user.model.ts"
 import { Auth } from "@warlock.js/auth";
 import { RegisterModel } from "@warlock.js/cascade";
+import { v, type Infer } from "@warlock.js/seal";
+
+export const userSchema = v.object({
+  email: v.string().email(),
+  password: v.string(),
+});
+
+export type UserSchema = Infer<typeof userSchema>;
 
 @RegisterModel()
 export class User extends Auth<UserSchema> {
@@ -24,7 +32,18 @@ export class User extends Auth<UserSchema> {
 }
 ```
 
-```ts title="src/app/admins/models/admin/admin.model.ts"
+```ts title="src/app/admins/models/admin.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+import { v, type Infer } from "@warlock.js/seal";
+
+export const adminSchema = v.object({
+  email: v.string().email(),
+  password: v.string(),
+});
+
+export type AdminSchema = Infer<typeof adminSchema>;
+
 @RegisterModel()
 export class Admin extends Auth<AdminSchema> {
   public static table = "admins";
@@ -41,8 +60,9 @@ Each gets its own table, its own schema, its own `userType` slug. They DON'T sha
 ## Register them in `config.auth`
 
 ```ts title="src/config/auth.ts"
-import { User } from "@/app/users/models/user.model";
-import { Admin } from "@/app/admins/models/admin.model";
+import { env } from "@warlock.js/core";
+import { User } from "app/users/models/user/user.model";
+import { Admin } from "app/admins/models/admin.model";
 
 export default {
   userType: {
@@ -69,7 +89,13 @@ The keys (`"user"`, `"admin"`) are the **userType slugs** that flow through ever
 ## Gate routes per user type
 
 ```ts
+import { router, type RequestHandler } from "@warlock.js/core";
 import { authMiddleware } from "@warlock.js/auth";
+
+const userAccountController: RequestHandler = async ({ response }) => response.success({});
+const listUsersController: RequestHandler = async ({ response }) => response.success({});
+const backOfficeController: RequestHandler = async ({ response }) => response.success({});
+const dashboardController: RequestHandler = async ({ response }) => response.success({});
 
 router.get("/account", userAccountController, { middleware: [authMiddleware("user")] });
 router.get("/admin/users", listUsersController, { middleware: [authMiddleware("admin")] });

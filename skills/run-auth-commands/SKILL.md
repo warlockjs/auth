@@ -103,10 +103,24 @@ Unlike `auth.cleanup`, do **not** schedule it: it is a full table scan (it must 
 
 If `auth.cleanup` doesn't cover everything your app needs (e.g. you also want to revoke tokens for inactive users), write your own command and combine the auth service helpers:
 
+```ts title="src/app/users/models/user/user.model.ts"
+import { Auth } from "@warlock.js/auth";
+import { RegisterModel } from "@warlock.js/cascade";
+
+@RegisterModel()
+export class User extends Auth {
+  public static table = "users";
+
+  public get userType(): string {
+    return "user";
+  }
+}
+```
+
 ```ts
 import { command } from "@warlock.js/core";
 import { authService } from "@warlock.js/auth";
-import { User } from "@/app/users/models/user.model";
+import { User } from "app/users/models/user/user.model";
 
 export function registerDeepCleanupCommand() {
   return command({
@@ -120,6 +134,7 @@ export function registerDeepCleanupCommand() {
     action: async () => {
       await authService.cleanupExpiredTokens();
 
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const stale = await User.where("last_seen_at", "<", thirtyDaysAgo).get();
 
       for (const user of stale) {
