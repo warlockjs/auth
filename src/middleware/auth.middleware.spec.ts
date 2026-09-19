@@ -13,7 +13,7 @@ vi.mock("@warlock.js/logger", () => ({
   log: { error: vi.fn() },
 }));
 
-vi.mock("../services/jwt", async importOriginal => {
+vi.mock("../services/jwt", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/jwt")>();
 
   return {
@@ -256,9 +256,11 @@ describe("authMiddleware", () => {
   // expired token — rather than asserting a `clearCurrentUser()` call that
   // no longer exists.
   it("rejects and clears a previously-set identity when the JWT itself is invalid (forged/malformed/expired)", async () => {
-    jwtVerify.mockRejectedValue(Object.assign(new Error("malformed token"), {
-      code: "FAST_JWT_MALFORMED",
-    }));
+    jwtVerify.mockRejectedValue(
+      Object.assign(new Error("malformed token"), {
+        code: "FAST_JWT_MALFORMED",
+      }),
+    );
 
     const middleware = authMiddleware([]);
     const request = buildRequest("garbage-token");
@@ -274,9 +276,11 @@ describe("authMiddleware", () => {
   });
 
   it("rejects an expired JWT (FAST_JWT_EXPIRED) with 401, not a thrown error", async () => {
-    jwtVerify.mockRejectedValue(Object.assign(new Error("token expired"), {
-      code: "FAST_JWT_EXPIRED",
-    }));
+    jwtVerify.mockRejectedValue(
+      Object.assign(new Error("token expired"), {
+        code: "FAST_JWT_EXPIRED",
+      }),
+    );
 
     const middleware = authMiddleware([]);
     const request = buildRequest("expired-token");
@@ -438,7 +442,7 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
   }
 
   /** A request on a route of the given kind, at a given URL, with no credential. */
-  function buildRouteRequest(isPage: boolean, url: string) {
+  function buildRouteRequest(isPage: boolean, url: string, locale = "en") {
     return {
       authorizationValue: undefined,
       // `cookie:token` reads the credential via request.cookie(); no cookie set
@@ -448,6 +452,7 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
       decodedAccessToken: undefined as unknown,
       route: { isPage },
       url,
+      locale,
     };
   }
 
@@ -518,6 +523,153 @@ describe("authMiddleware — page-route login redirect (b9ab9804)", () => {
 });
 
 /**
+ * The login redirect target must carry the request's locale prefix under an
+ * active `web.localeRouting` strategy, same as `returnUrl` already does —
+ * otherwise an anonymous `/ar/admin` bounces to the default locale's
+ * `/login` instead of `/ar/login`. `auth` reads `web.localeRouting.strategy`
+ * / `app.localeCodes` / `app.localeCode` by convention (see
+ * `./localized-login-path.ts`); it never imports `web`.
+ */
+describe("authMiddleware — locale-prefixed login redirect", () => {
+  function buildPageResponse() {
+    return { unauthorized: vi.fn(), redirect: vi.fn() };
+  }
+
+  function buildRouteRequest(isPage: boolean, url: string, locale: string) {
+    return {
+      authorizationValue: undefined,
+      cookie: vi.fn(() => undefined),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      route: { isPage },
+      url,
+      locale,
+    };
+  }
+
+  /** Routes `config.key` for `auth.pageAuth.loginPath` plus `web`/`app` locale-routing keys. */
+  function stubLocaleRouting(options: {
+    loginPath: string;
+    strategy?: string;
+    localeCodes?: string[];
+    defaultLocale?: string;
+  }) {
+    configKey.mockImplementation((key: string, fallback?: unknown) => {
+      if (key === "auth.pageAuth.loginPath") return options.loginPath;
+      if (key === "web.localeRouting.strategy") return options.strategy ?? "none";
+      if (key === "app.localeCodes") return options.localeCodes ?? [];
+      if (key === "app.localeCode") return options.defaultLocale ?? "";
+
+      return fallback; // returnUrlParam → "returnUrl"; everything else → default
+    });
+  }
+
+  it("redirects an ar request to the locale-prefixed login path under strategy prefix", async () => {
+    stubLocaleRouting({
+      loginPath: "/login",
+      strategy: "prefix",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/ar/admin", "ar");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/ar/login?returnUrl=%2Far%2Fadmin");
+  });
+
+  it("redirects an en request to the bare login path under strategy prefix-except-default", async () => {
+    stubLocaleRouting({
+      loginPath: "/login",
+      strategy: "prefix-except-default",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/admin", "en");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/login?returnUrl=%2Fadmin");
+  });
+
+  it("redirects an ar request to the ar-prefixed login path under strategy prefix-except-default", async () => {
+    stubLocaleRouting({
+      loginPath: "/login",
+      strategy: "prefix-except-default",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/ar/admin", "ar");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/ar/login?returnUrl=%2Far%2Fadmin");
+  });
+
+  it("leaves loginPath unchanged when strategy is none", async () => {
+    stubLocaleRouting({
+      loginPath: "/login",
+      strategy: "none",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/admin", "ar");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/login?returnUrl=%2Fadmin");
+  });
+
+  it("leaves an already-prefixed loginPath unchanged", async () => {
+    stubLocaleRouting({
+      loginPath: "/ar/login",
+      strategy: "prefix",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/ar/admin", "ar");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith("/ar/login?returnUrl=%2Far%2Fadmin");
+  });
+
+  it("leaves an absolute loginPath unchanged", async () => {
+    stubLocaleRouting({
+      loginPath: "https://accounts.example.com/login",
+      strategy: "prefix",
+      localeCodes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const middleware = authMiddleware([], "cookie:token");
+    const request = buildRouteRequest(true, "/ar/admin", "ar");
+    const response = buildPageResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.redirect).toHaveBeenCalledWith(
+      "https://accounts.example.com/login?returnUrl=%2Far%2Fadmin",
+    );
+  });
+});
+
+/**
  * CSRF Origin check:
  * a cookie-sourced credential on an unsafe method (POST/PUT/PATCH/DELETE) must
  * carry an `Origin` — or, absent that, `Referer` — naming the request's own
@@ -554,7 +706,9 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
 
     return {
       authorizationValue: source === "header" ? "the-token" : undefined,
-      cookie: vi.fn((name: string) => (source === "cookie" && name === "token" ? "the-token" : undefined)),
+      cookie: vi.fn((name: string) =>
+        source === "cookie" && name === "token" ? "the-token" : undefined,
+      ),
       locals: { user: undefined as unknown },
       decodedAccessToken: undefined as unknown,
       method,
@@ -595,7 +749,8 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
     stubSuccessfulAuth();
     configKey.mockImplementation((key: string, fallback?: unknown) => {
       if (key === "auth.csrf.allowedOrigins") return ["https://allowed.example.com"];
-      if (key.startsWith("auth.userType.")) return { find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) };
+      if (key.startsWith("auth.userType."))
+        return { find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) };
 
       return fallback;
     });

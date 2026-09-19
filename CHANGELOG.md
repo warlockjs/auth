@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.17.0 - Unreleased
+
+### Fixed
+
+- The `pageAuth` login redirect now carries the request's locale prefix when `@warlock.js/web`'s `web.localeRouting.strategy` is active. Before, an anonymous request to a locale-prefixed page (e.g. `/ar/admin`) always redirected to the bare `auth.pageAuth.loginPath` (e.g. `/login?returnUrl=%2Far%2Fadmin`), dropping the locale even though `returnUrl` kept it. It now redirects to the locale-prefixed login path (`/ar/login?returnUrl=%2Far%2Fadmin`) — reading `web.localeRouting.strategy` / `app.localeCodes` / `app.localeCode` from config directly (`auth` has no dependency on `web`, in either direction). Left unchanged when `loginPath` is absolute (`http…`) or already locale-prefixed.
+
 ## 5.16.0 - 2026-09-18
 
 ### Added

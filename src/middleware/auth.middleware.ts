@@ -11,6 +11,7 @@ import {
   CsrfOriginMismatchError,
   requiresCsrfOriginCheck,
 } from "./csrf-origin-check";
+import { localizedLoginPath } from "./localized-login-path";
 
 /** The 401 body shape every rejection in this middleware carries. */
 type UnauthorizedPayload = { error: string; errorCode: string };
@@ -37,11 +38,17 @@ function rejectUnauthorized({ request, response }: HttpContext, payload: Unautho
   const loginPath = authConfig.pageAuth.loginPath();
 
   if (loginPath && request.route?.isPage) {
-    const separator = loginPath.includes("?") ? "&" : "?";
+    // Under an active `web.localeRouting` strategy, the login destination
+    // itself must carry the request's locale prefix — otherwise an anonymous
+    // `/ar/admin` bounces to the DEFAULT locale's `/login` rather than
+    // `/ar/login`, even though `returnUrl` below correctly points back at
+    // `/ar/admin`. See `./localized-login-path.ts`.
+    const destination = localizedLoginPath(loginPath, request.locale);
+    const separator = destination.includes("?") ? "&" : "?";
     const returnUrl = encodeURIComponent(request.url);
 
     return response.redirect(
-      `${loginPath}${separator}${authConfig.pageAuth.returnUrlParam()}=${returnUrl}`,
+      `${destination}${separator}${authConfig.pageAuth.returnUrlParam()}=${returnUrl}`,
     );
   }
 
@@ -117,10 +124,13 @@ export function authMiddleware(
     const authorizationValue = readCredential(request, tokenFrom);
 
     if (!authorizationValue) {
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.missingAccessToken"),
-        errorCode: AuthErrorCodes.MissingAccessToken,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.missingAccessToken"),
+          errorCode: AuthErrorCodes.MissingAccessToken,
+        },
+      );
     }
 
     // CSRF Origin check: only in scope for a cookie-sourced
@@ -171,10 +181,13 @@ export function authMiddleware(
       // survive).
       request.locals.user = undefined;
 
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.invalidAccessToken"),
-        errorCode: AuthErrorCodes.InvalidAccessToken,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
+        },
+      );
     }
 
     request.decodedAccessToken = decoded;
@@ -185,10 +198,13 @@ export function authMiddleware(
     const accessToken = await AccessTokenModel.findByToken(authorizationValue);
 
     if (!accessToken) {
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.invalidAccessToken"),
-        errorCode: AuthErrorCodes.InvalidAccessToken,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
+        },
+      );
     }
 
     // ... and the row must still be live. Existence alone was the whole check
@@ -198,19 +214,25 @@ export function authMiddleware(
     if (accessTokenRowIsExpired(accessToken)) {
       await accessToken.destroy();
 
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.invalidAccessToken"),
-        errorCode: AuthErrorCodes.InvalidAccessToken,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
+        },
+      );
     }
 
     const userType = decoded.userType ?? accessToken.userType;
 
     if (allowedTypes.length && !allowedTypes.includes(userType)) {
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.unauthorized"),
-        errorCode: AuthErrorCodes.Unauthorized,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.unauthorized"),
+          errorCode: AuthErrorCodes.Unauthorized,
+        },
+      );
     }
 
     const UserModel = config.key(`auth.userType.${userType}`);
@@ -226,17 +248,23 @@ export function authMiddleware(
     if (!currentUser) {
       await accessToken.destroy();
 
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.invalidAccessToken"),
-        errorCode: AuthErrorCodes.InvalidAccessToken,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.invalidAccessToken"),
+          errorCode: AuthErrorCodes.InvalidAccessToken,
+        },
+      );
     }
 
     if (!(await authService.canAuthenticate(currentUser))) {
-      return rejectUnauthorized({ request, response }, {
-        error: t("auth.errors.unauthorized"),
-        errorCode: AuthErrorCodes.Unauthorized,
-      });
+      return rejectUnauthorized(
+        { request, response },
+        {
+          error: t("auth.errors.unauthorized"),
+          errorCode: AuthErrorCodes.Unauthorized,
+        },
+      );
     }
 
     request.locals.user = currentUser;
