@@ -34,6 +34,14 @@ export class AccessToken extends Model {
   public static schema = accessTokenSchema;
 
   /**
+   * The raw signed JWT is a bearer credential — never serialize it. `hidden`
+   * only strips it from `toJSON()` / `JSON.stringify(model)` (so
+   * `response.json(token)` or a resource cannot leak it); `get("token")`,
+   * `findByToken` and every query still read the column.
+   */
+  public static hidden = ["token"];
+
+  /**
    * Permanent regardless of the data source default — Mongo's driver default
    * is `"trash"`, which would copy live credential material (the JWT itself)
    * into `access_tokensTrash` on every `destroy()` (logout, expiry purge,

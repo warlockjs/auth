@@ -52,6 +52,14 @@ export class RefreshToken extends Model {
   public static schema = refreshTokenSchema;
 
   /**
+   * The raw signed refresh JWT is a bearer credential — never serialize it.
+   * `hidden` only strips it from `toJSON()` / `JSON.stringify(model)` (e.g. a
+   * session list returned via `response.json`); `get("token")`,
+   * `findByToken` / `findForUser` and every query still read the column.
+   */
+  public static hidden = ["token"];
+
+  /**
    * Permanent regardless of the data source default — Mongo's driver default
    * is `"trash"`, which would copy live credential material (the JWT itself)
    * into `refresh_tokensTrash` on every `destroy()` (expiry purge,

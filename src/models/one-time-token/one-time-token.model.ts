@@ -41,6 +41,13 @@ export class OneTimeToken extends Model {
   public static schema = oneTimeTokenSchema;
 
   /**
+   * The SHA-256 of a one-time secret. For a short OTP code the hash is
+   * brute-forceable offline, so it is as sensitive as the code itself — never
+   * serialize it. Only `toJSON()` is affected; `findByHash` still queries it.
+   */
+  public static hidden = ["token_hash"];
+
+  /**
    * Permanent regardless of the data source default — Mongo's driver default
    * is `"trash"`, which would copy spent token hashes into
    * `one_time_tokensTrash` on every `destroy()`. A purged one-time token must
