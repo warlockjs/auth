@@ -74,7 +74,7 @@ On lockout the middleware sends:
 { "error": "...", "errorCode": "EC004" } // AuthErrorCodes.TooManyAttempts
 ```
 
-Define the `auth.errors.tooManyAttempts` translation key (or pass `errorMessage`) so clients see a real message instead of the raw key. Map `EC004` in your error transformer the same way you map the other `AuthErrorCodes`.
+`@warlock.js/auth` ships built-in `en` and `ar` text for `auth.errors.tooManyAttempts` (and every other `auth.errors.*` key it uses); define the key in your own locale files, or pass `errorMessage`, to override it. Map `EC004` in your error transformer the same way you map the other `AuthErrorCodes`.
 
 ## Beyond login
 
