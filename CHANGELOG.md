@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 5.17.0 - Unreleased
 
+### Security
+
+- The CSRF Origin/Referer check `authMiddleware("cookie:*")` runs (`assertCsrfOriginAllowed`) now delegates its same-origin/`auth.csrf.allowedOrigins` comparison to `@warlock.js/core`'s `resolveCsrfOriginVerdict`, shared with core's new default CSRF-Origin guard (card 8a752ab2, see `@warlock.js/core`'s 5.17.0 changelog) so the two checks can never drift apart. Behaviour is unchanged for routes already using `authMiddleware("cookie:*")`.
+
 ### Fixed
 
 - The `pageAuth` login redirect now carries the request's locale prefix when `@warlock.js/web`'s `web.localeRouting.strategy` is active. Before, an anonymous request to a locale-prefixed page (e.g. `/ar/admin`) always redirected to the bare `auth.pageAuth.loginPath` (e.g. `/login?returnUrl=%2Far%2Fadmin`), dropping the locale even though `returnUrl` kept it. It now redirects to the locale-prefixed login path (`/ar/login?returnUrl=%2Far%2Fadmin`) — reading `web.localeRouting.strategy` / `app.localeCodes` / `app.localeCode` from config directly (`auth` has no dependency on `web`, in either direction). Left unchanged when `loginPath` is absolute (`http…`) or already locale-prefixed.

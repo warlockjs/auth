@@ -1,6 +1,5 @@
-import type { Request } from "@warlock.js/core";
+import { resolveCsrfOriginVerdict, type Request } from "@warlock.js/core";
 import type { TokenFrom } from "../contracts/types";
-import { authConfig } from "../services/auth-config";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 
 /** HTTP methods the CSRF Origin check exempts — reads, never state changes. */
@@ -39,85 +38,28 @@ export function requiresCsrfOriginCheck(tokenFrom: TokenFrom, method: string): b
 }
 
 /**
- * The request's own origin — what an `Origin`/`Referer` header must match.
- *
- * `request.hostname` (core's `Request`, backed by Express/Fastify's
- * `hostname`) never carries a port. A browser's `Origin` header on a
- * non-default port (e.g. any `warlock dev` session) does, so the port must
- * come from the raw `Host` header instead — core exposes no getter for that,
- * so it is read directly here.
- */
-function ownOrigin(request: Request): string {
-  const hostHeader = request.header("host");
-  const host = typeof hostHeader === "string" && hostHeader ? hostHeader : request.hostname;
-
-  return `${request.protocol}://${host}`;
-}
-
-/** Extract `scheme://host` from a full URL (e.g. a `Referer` header value). */
-function originOf(rawUrl: string): string | undefined {
-  try {
-    const url = new URL(rawUrl);
-
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Normalize an origin string (`scheme://host[:port]`) so that a default port
- * (`:80` on `http:`, `:443` on `https:`) compares equal to the same origin
- * written without a port. Falls back to the raw value if it does not parse
- * as a URL (in which case it will simply fail the exact-match comparison).
- */
-function normalizeOrigin(origin: string): string {
-  try {
-    const url = new URL(origin);
-    const isDefaultPort =
-      (url.protocol === "http:" && (url.port === "" || url.port === "80")) ||
-      (url.protocol === "https:" && (url.port === "" || url.port === "443"));
-
-    return `${url.protocol}//${isDefaultPort ? url.hostname : url.host}`;
-  } catch {
-    return origin;
-  }
-}
-
-/** Same-origin, or an explicit entry in `auth.csrf.allowedOrigins` (default `[]`). */
-function isAllowedOrigin(origin: string, request: Request): boolean {
-  if (normalizeOrigin(origin) === normalizeOrigin(ownOrigin(request))) return true;
-
-  return authConfig.csrf.allowedOrigins().includes(origin);
-}
-
-/**
  * CSRF Origin check for a cookie-authenticated unsafe-method request (lead
  * decision 3). Allowed when `Origin` — or, when `Origin` is absent, `Referer`
  * — names the request's own origin or an entry in `auth.csrf.allowedOrigins`.
  * Throws {@link CsrfOriginMismatchError} otherwise, including when BOTH
  * headers are absent.
  *
+ * Delegates the actual same-origin/allowedOrigins/trustProxy-aware
+ * comparison to `@warlock.js/core`'s `resolveCsrfOriginVerdict`
+ * (`core/src/http/csrf-origin-policy.ts`) — SECURITY card 8a752ab2 moved that
+ * logic down into `core` so this middleware's check and core's own default
+ * CSRF-Origin guard (`core/src/http/csrf-default-guard.ts`, which now runs
+ * even earlier, ahead of this middleware, for cookie-carrying unsafe-method
+ * requests generally) share one implementation instead of two copies that
+ * could drift apart.
+ *
  * Callers gate this behind {@link requiresCsrfOriginCheck} — this function
  * itself does not re-check the token source or the method.
  */
 export function assertCsrfOriginAllowed(request: Request): void {
-  const origin = request.origin;
+  const verdict = resolveCsrfOriginVerdict(request);
 
-  if (origin) {
-    if (isAllowedOrigin(origin, request)) return;
-
-    throw new CsrfOriginMismatchError("origin-mismatch");
+  if (!verdict.allowed) {
+    throw new CsrfOriginMismatchError(verdict.reason);
   }
-
-  const referer = request.header("referer");
-  const refererOrigin = typeof referer === "string" ? originOf(referer) : undefined;
-
-  if (refererOrigin) {
-    if (isAllowedOrigin(refererOrigin, request)) return;
-
-    throw new CsrfOriginMismatchError("referer-mismatch");
-  }
-
-  throw new CsrfOriginMismatchError("missing-origin-and-referer");
 }

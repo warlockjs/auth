@@ -4,9 +4,74 @@ const configKey = vi.fn();
 const jwtVerify = vi.fn();
 const accessTokenFindByToken = vi.fn();
 
+/**
+ * Mirrors `core/src/http/csrf-origin-policy.ts`'s `resolveCsrfOriginVerdict`
+ * against this file's plain fake-request objects (`origin`/`header`/
+ * `protocol`/`hostname`) — `csrf-origin-check.ts` now delegates to the real
+ * one, so this test double stands in for `@warlock.js/core` exactly as it
+ * did before that extraction.
+ */
+function fakeResolveCsrfOriginVerdict(request: {
+  origin?: string;
+  header: (name: string) => unknown;
+  protocol: string;
+  hostname: string;
+}) {
+  const normalize = (origin: string) => {
+    try {
+      const url = new URL(origin);
+      const isDefaultPort =
+        (url.protocol === "http:" && (url.port === "" || url.port === "80")) ||
+        (url.protocol === "https:" && (url.port === "" || url.port === "443"));
+      return `${url.protocol}//${isDefaultPort ? url.hostname : url.host}`;
+    } catch {
+      return origin;
+    }
+  };
+  const ownOrigin = () => {
+    const hostHeader = request.header("host");
+    const host = typeof hostHeader === "string" && hostHeader ? hostHeader : request.hostname;
+    return `${request.protocol}://${host}`;
+  };
+  const isAllowed = (origin: string) => {
+    if (normalize(origin) === normalize(ownOrigin())) return true;
+    const allowedOrigins: string[] = configKey("auth.csrf.allowedOrigins", []) ?? [];
+    return allowedOrigins.includes(origin);
+  };
+  const originOf = (rawUrl: string) => {
+    try {
+      const url = new URL(rawUrl);
+      return `${url.protocol}//${url.host}`;
+    } catch {
+      return undefined;
+    }
+  };
+
+  if (request.origin) {
+    return isAllowed(request.origin)
+      ? { allowed: true as const }
+      : { allowed: false as const, reason: "origin-mismatch" as const };
+  }
+
+  const referer = request.header("referer");
+  const refererOrigin = typeof referer === "string" ? originOf(referer) : undefined;
+
+  if (refererOrigin) {
+    return isAllowed(refererOrigin)
+      ? { allowed: true as const }
+      : { allowed: false as const, reason: "referer-mismatch" as const };
+  }
+
+  return { allowed: false as const, reason: "missing-origin-and-referer" as const };
+}
+
 vi.mock("@warlock.js/core", () => ({
   config: { key: (...args: unknown[]) => configKey(...args) },
   t: (key: string) => key,
+  resolveCsrfOriginVerdict: (request: unknown) =>
+    fakeResolveCsrfOriginVerdict(
+      request as Parameters<typeof fakeResolveCsrfOriginVerdict>[0],
+    ),
 }));
 
 vi.mock("@warlock.js/logger", () => ({
