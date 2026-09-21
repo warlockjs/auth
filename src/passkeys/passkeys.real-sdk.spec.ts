@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const configValues = vi.hoisted(() => ({}) as Record<string, unknown>);
 
@@ -35,6 +35,7 @@ import {
   verifyPasskeyRegistration,
 } from "./passkey-registration";
 import { defined } from "../test-support/defined";
+import { loadSimpleWebAuthn } from "./simplewebauthn";
 
 class User extends InMemoryModel {
   public static table = "users";
@@ -48,6 +49,14 @@ const ORIGIN = "https://app.test";
 const RP_ID = "app.test";
 
 const request = (origin: string) => ({ origin }) as never;
+
+// Load the real optional peer before individual test budgets begin. The passkey
+// methods deliberately lazy-load it in production, but paying that cold import
+// in the first registration test can leave its timed-out work contaminating
+// the following case.
+beforeAll(async () => {
+  await loadSimpleWebAuthn();
+});
 
 beforeEach(() => {
   resetTables();
