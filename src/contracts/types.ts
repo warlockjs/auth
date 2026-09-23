@@ -37,6 +37,26 @@ export type LogoutWithoutTokenBehavior = "revoke-all" | "error";
 /** The single request credential source an auth middleware instance accepts. */
 export type TokenFrom = "header" | `cookie:${string}`;
 
+/** One explicitly named credential location accepted by auth middleware. */
+export interface AuthCredentialDescriptor {
+  source: "header" | "cookie";
+  key?: string;
+}
+
+/** Cookie credential and bounded duplicate window for automatic renewal. */
+export interface AuthRefreshCredentialDescriptor extends AuthCredentialDescriptor {
+  /** Milliseconds; the service clamps this to the 0â€“10 second range (default 5 seconds). */
+  overlapMs?: number;
+}
+
+/** Per-route authentication behavior for the object middleware overload. */
+export interface AuthMiddlewareOptions extends Partial<AuthCredentialDescriptor> {
+  optional?: boolean;
+  /** Opt-in automatic renewal credential. Cookie sources only. */
+  refresh?: AuthRefreshCredentialDescriptor;
+  redirect?: { to: string; returnUrlParam?: string };
+}
+
 /** Application policy that decides whether a resolved user may authenticate. */
 export type CanAuthenticate = (user: Auth) => boolean | Promise<boolean>;
 
@@ -256,6 +276,8 @@ export type AuthConfigurations = {
   userType: {
     [userType: string]: ChildModel<Auth>;
   };
+  /** Default user type used by `authMiddleware()` and options-only overloads. */
+  defaultUserType?: string;
   /**
    * Decide whether a resolved user may authenticate or receive new tokens.
    * @default () => true

@@ -1,6 +1,6 @@
 ---
 name: manage-tokens
-description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; CLI cleanup — `@warlock.js/auth/run-auth-commands/SKILL.md`; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
+description: "Manage tokens in @warlock.js/auth; use when you need to manage tokens."
 ---
 
 # Manage tokens
@@ -38,6 +38,19 @@ const pair = await authService.createTokenPair(user, deviceInfo);
 
 ## Refresh with rotation — `refreshTokens`
 
+Refresh and family revocation use durable family revision checks inside a
+serializable Cascade transaction. Run the additive `authMigrations` before
+using the upgraded APIs. Transaction support is required: the service fails
+rather than falling back to uncoordinated writes. MongoDB deployments therefore
+need a transaction-capable topology.
+
+An operation that owns its transaction retries serialization conflicts at most
+three times. Inside an application-owned transaction it joins once and leaves
+retry/rollback to the caller. Auth notifications from owned attempts are emitted
+only after successful commit; notifications inside an application-owned outer
+transaction retain their existing timing before that outer commit. Keep external
+side effects outside such a transaction.
+
 ```ts
 const next = await authService.refreshTokens(oldRefreshToken, deviceInfo);
 // next: TokenPair | null
@@ -69,7 +82,7 @@ refresh (B)      → revokes B; creates C in family X
 refresh (A again)→ A is revoked → revoke family X entirely
 ```
 
-The family ties together "successive rotations of one session." Logout of one device kills only that device's family — other devices keep their own families.
+The family ties together "successive rotations of one session." In 5.19 it is also a durable `AuthTokenFamily` row: family revoke marks that family, revokes its refresh rows, and deletes its associated access rows atomically. Access rows from before family association are conservatively deleted only for the same user and user type; they are never guessed into a family.
 
 ## Listing active sessions
 
@@ -91,9 +104,8 @@ Use this for "active sessions" UIs. Revoke a specific session by calling `.revok
 // Specific access token
 await authService.removeAccessToken(user, accessTokenString);
 
-// Specific refresh token (via the RefreshToken instance)
-const rt = await RefreshToken.findByToken(refreshString);
-await rt?.revoke();
+// Specific session/family
+await authService.revokeTokenFamily(familyId);
 
 // All access tokens for a user
 await authService.removeAllAccessTokens(user);
@@ -175,6 +187,7 @@ The package signs access and refresh tokens with independent secrets — `config
 - Don't disable rotation (`config.auth.refreshToken.rotation = false`) unless you genuinely understand the tradeoff — you lose replay detection.
 - Don't increase `maxPerUser` to a huge number "to be safe." Each active refresh token is a revocation surface; fewer simultaneous tokens means less attack surface.
 - Don't manually delete `AccessToken` rows in a service. The user might be hitting a request mid-revoke and get an inconsistent state. Use the `authService` helpers.
+- Run the additive `authMigrations` on upgrade. Do not alter or backfill token rows yourself; legacy access tokens are handled conservatively on family revoke.
 
 ## See also
 

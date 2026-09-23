@@ -1,11 +1,11 @@
 ---
 name: protect-routes
-description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — `@warlock.js/auth/customize-user-type/SKILL.md`; issuing the token — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
+description: "Gate routes with authMiddleware in @warlock.js/auth; use when you need to protect routes."
 ---
 
 # Gate routes with `authMiddleware`
 
-`authMiddleware(allowedUserType: string | string[])` returns a Warlock middleware. Attach it to routes or route groups. The argument is **required** — there is no anonymous/optional mode. A request without a valid access token is always rejected with `401`; public routes simply omit the middleware.
+`authMiddleware` returns a Warlock middleware. Attach it to routes or route groups. The legacy string overload is preserved; the object overload makes credential source, optional resolution, and a page-local redirect explicit.
 
 ```ts title="src/app/users/models/user/user.model.ts"
 import { Auth } from "@warlock.js/auth";
@@ -33,14 +33,13 @@ const accountController: RequestHandler = async ({ response }) => response.succe
 const adminController: RequestHandler = async ({ response }) => response.success({});
 const staffController: RequestHandler = async ({ response }) => response.success({});
 
-// Mode 1 — required, any user type
-//   Rejects with 401 if no valid token; any authenticated user passes.
+// Required default type (`auth.defaultUserType`, or the sole configured type)
 router.get("/account", accountController, {
-  middleware: [authMiddleware([])],   // empty array = "any logged-in user"
+  middleware: [authMiddleware()],
 });
 
 // Mode 2 — required, specific user type(s)
-//   Rejects with 401 if no token OR if token's userType isn't allowed.
+//   Rejects missing/invalid credentials with 401 and a disallowed user type with 403.
 router.get("/admin", adminController, {
   middleware: [authMiddleware("admin")],
 });
@@ -69,13 +68,13 @@ A token passes three separate checks, in order — a token can fail any one of t
 2. **The access-token row still exists** — deleting it (logout) invalidates the token immediately, before its JWT expiry.
 3. **The row's own `expires_at` has not passed** (since 4.12.0). The database is the authority on the session: a row whose expiry has elapsed is rejected and deleted, even if the JWT itself is still within its lifetime. A row with a missing or unparseable `expires_at` is treated as expired, not as never-expiring.
 
-On failure, the middleware returns one of these 401 responses:
+Missing or invalid credentials return 401; an authenticated disallowed user type returns 403:
 
 | Error code | When |
 | --- | --- |
-| `MissingAccessToken` | No `Authorization` header |
+| `MissingAccessToken` | No credential at the configured source |
 | `InvalidAccessToken` | Token doesn't verify (signature, missing/passed `exp`, wrong token type), has no DB row, or the row's `expires_at` has passed |
-| `Unauthorized` | Token valid but user-type isn't in the allowed list |
+| `Unauthorized` | Token valid but user-type isn't in the allowed list (403) |
 
 ## Page routes: redirect to login instead of the JSON 401
 
@@ -103,7 +102,7 @@ Behavior, precisely:
 
 The page-vs-API signal is `request.route.isPage`. Config is typed as `PageAuthConfig` on `AuthConfigurations` (`loginPath?: string`, `returnUrlParam?: string`, default `"returnUrl"`); read at runtime through `authConfig.pageAuth`.
 
-> `auth.pageAuth` is **not a second auth mechanism** — it is a convenience *adapter* over the same "not authenticated" outcome the gate already produces. It only changes the **representation** of that outcome on a page route (a browser-friendly login redirect) instead of the JSON `401`; the decision that the request is unauthenticated is unchanged. The sanctioned *generic* way to make authentication soft is the app-owned optional-auth middleware below — `pageAuth` is the built-in adapter for the common "redirect a logged-out human to /login" case, so most apps never need to hand-roll it.
+> A local `redirect` object is preferred for a page that needs a different login destination; absent it, `auth.pageAuth` remains the compatibility fallback.
 
 ## Reading the user in a controller
 
@@ -142,31 +141,23 @@ router.group({ prefix: "/admin", middleware: [authMiddleware("admin")] }, () => 
 
 Every route inside the group is gated — the group's `middleware` array applies to each route in the callback. Cleaner than repeating the middleware on each route.
 
-## Optional auth is an app-owned middleware (the sanctioned pattern)
+## Optional auth
 
-`authMiddleware` is a **hard gate** — it always requires a valid token and rejects when one is absent. There is deliberately no built-in "hydrate `request.locals.user` if a token is present, otherwise continue" mode, because the *sanctioned generic pattern* for soft/optional auth is a small **app-owned optional-auth middleware**: resolve the user when a valid token is present, and otherwise leave the route to decide. The app owns it because the "what to do when absent" policy is the app's, not the framework's.
+Use `optional: true` in the object form when a public route should receive a verified user when one is present. Missing or invalid credentials continue anonymously; a hard gate remains the default.
 
-```ts title="src/app/middleware/optional-auth.middleware.ts"
-import { type Middleware } from "@warlock.js/core";
-import { jwt } from "@warlock.js/auth";
-
-// The one sanctioned optional-auth shape: resolve if present, never reject.
-// Middleware receives the context object ({ request, response }), like a handler.
-export const optionalAuth: Middleware = async ({ request }) => {
-  const token = request.authorizationValue;
-  if (!token) return; // absent → continue anonymously; the route decides
-  try {
-    const decoded = await jwt.verify(token);
-    // hydrate request.locals.user from your token/user model when valid
-  } catch {
-    // invalid token on an optional route → treat as anonymous, don't reject
-  }
-  // returning nothing (undefined) === continue to the handler
-};
+```ts
+middleware: [authMiddleware({ source: "header", optional: true })]
 ```
 
-Wire it like any middleware (`{ middleware: [optionalAuth] }`), then branch on `request.locals.user` in the controller. Use `authMiddleware` when the route must be gated; use this when the route is public but personalizes for a signed-in user. `auth.pageAuth` (above) is the built-in **adapter** over this same "unauthenticated" outcome for the common page-redirect case — it is not a competing mechanism.
+## Automatic cookie renewal
 
+Add `refresh: { source: "cookie", key: "refresh_token", overlapMs?: 5000 }`
+to a typed cookie middleware to renew an absent, invalid, or expired access
+cookie before the handler. It writes the successor access and refresh cookies
+through `authService.setAuthCookie`; it never replays a handler. `overlapMs` is
+clamped to 0â€“10,000 ms (default 5,000). Only the exact immediate successor is
+tolerated during that window. The legacy `refreshTokens` API stays strict; a
+later old-token presentation revokes its family.
 ## Custom error responses
 
 The middleware uses the framework's `response.unauthorized({...})` shape. To override the response globally, hook the framework's error transformer to remap `AuthErrorCodes.*` codes.
@@ -208,13 +199,13 @@ router.post("/articles", articlesController, { middleware: [authMiddleware([]), 
 
 Use `authMiddleware` to establish *who the caller is*, and `access` to decide *what they may do*. They compose — `access` reads the user `authMiddleware` put on the request.
 
-## Cookie sessions: `authMiddleware([], "cookie:<name>")`
+## Cookie credentials
 
-`authMiddleware`'s second argument, `tokenFrom`, selects the credential source and defaults to `"header"`. Pass `` `cookie:<name>` `` to read the credential from a named cookie instead of the `Authorization` header — the same gate, the same three checks, the same `request.locals.user` / `request.decodedAccessToken` outcome, just a different place to find the token:
+Use `{ source: "cookie", key: "token" }` in the object form. The same checks and `request.locals.user` outcome apply; legacy `authMiddleware("user", "cookie:token")` is also supported.
 
 ```ts
 router.get("/browser-account", accountController, {
-  middleware: [authMiddleware([], "cookie:token")],
+  middleware: [authMiddleware({ source: "cookie", key: "token" })],
 });
 ```
 

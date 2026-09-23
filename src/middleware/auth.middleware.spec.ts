@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const configKey = vi.fn();
 const jwtVerify = vi.fn();
 const accessTokenFindByToken = vi.fn();
+const renewAutomaticSession = vi.fn();
+const setAuthCookie = vi.fn();
+const canAuthenticate = vi.fn();
 
 /**
  * Mirrors `core/src/http/csrf-origin-policy.ts`'s `resolveCsrfOriginVerdict`
@@ -69,9 +72,7 @@ vi.mock("@warlock.js/core", () => ({
   config: { key: (...args: unknown[]) => configKey(...args) },
   t: (key: string) => key,
   resolveCsrfOriginVerdict: (request: unknown) =>
-    fakeResolveCsrfOriginVerdict(
-      request as Parameters<typeof fakeResolveCsrfOriginVerdict>[0],
-    ),
+    fakeResolveCsrfOriginVerdict(request as Parameters<typeof fakeResolveCsrfOriginVerdict>[0]),
 }));
 
 vi.mock("@warlock.js/logger", () => ({
@@ -94,6 +95,14 @@ vi.mock("../models/access-token", () => ({
   AccessToken: { findByToken: (...args: unknown[]) => accessTokenFindByToken(...args) },
 }));
 
+vi.mock("../services/auth.service", () => ({
+  authService: {
+    canAuthenticate: (...args: unknown[]) => canAuthenticate(...args),
+    renewAutomaticSession: (...args: unknown[]) => renewAutomaticSession(...args),
+    setAuthCookie: (...args: unknown[]) => setAuthCookie(...args),
+  },
+}));
+
 import { authMiddleware } from "./auth.middleware";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 import { makeCtx } from "./test-support/make-ctx";
@@ -107,7 +116,7 @@ function buildRequest(authorizationValue?: string) {
 }
 
 function buildResponse() {
-  return { unauthorized: vi.fn() };
+  return { unauthorized: vi.fn(), forbidden: vi.fn() };
 }
 
 /**
@@ -135,9 +144,175 @@ function stubConfig(userModel: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  canAuthenticate.mockResolvedValue(true);
+  renewAutomaticSession.mockResolvedValue(null);
 });
 
 describe("authMiddleware", () => {
+  it("renews a missing cookie access token before the handler and writes the rotated pair", async () => {
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "user" }));
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
+    renewAutomaticSession.mockResolvedValue({
+      accessToken: { token: "next-access", expiresAt: "2030-01-01T00:00:00.000Z" },
+      refreshToken: { token: "next-refresh", expiresAt: "2030-01-02T00:00:00.000Z" },
+    });
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn((name: string) => (name === "refresh" ? "old-refresh" : undefined)),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+    };
+    const response = buildResponse();
+    const middleware = authMiddleware("user", {
+      source: "cookie",
+      key: "access",
+      refresh: { source: "cookie", key: "refresh", overlapMs: 4_000 },
+    });
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(renewAutomaticSession).toHaveBeenCalledWith("old-refresh", "user", { overlapMs: 4_000 });
+    expect(setAuthCookie).toHaveBeenNthCalledWith(
+      1,
+      response,
+      expect.objectContaining({ token: "next-access" }),
+      { name: "access" },
+    );
+    expect(setAuthCookie).toHaveBeenNthCalledWith(
+      2,
+      response,
+      expect.objectContaining({ token: "next-refresh" }),
+      { name: "refresh" },
+    );
+    expect(accessTokenFindByToken).toHaveBeenCalledWith("next-access");
+    expect(request.locals.user).toEqual({ id: 1, userType: "user" });
+  });
+
+  it("keeps the local page redirect when automatic renewal has no valid refresh credential", async () => {
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn(() => undefined),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+      route: { isPage: true },
+      url: "/account",
+    };
+    const response = { ...buildResponse(), redirect: vi.fn() };
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.pageAuth.loginPath" ? "/login" : fallback,
+    );
+    const middleware = authMiddleware("user", {
+      source: "cookie",
+      key: "access",
+      refresh: { source: "cookie", key: "refresh" },
+      redirect: { to: "/sign-in", returnUrlParam: "next" },
+    });
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(renewAutomaticSession).not.toHaveBeenCalled();
+    expect(response.redirect).toHaveBeenCalledWith("/sign-in?next=%2Faccount");
+    expect(response.unauthorized).not.toHaveBeenCalled();
+  });
+
+  it("keeps optional middleware anonymous when automatic renewal fails", async () => {
+    renewAutomaticSession.mockResolvedValue(null);
+    const middleware = authMiddleware("user", {
+      source: "cookie",
+      key: "access",
+      optional: true,
+      refresh: { source: "cookie", key: "refresh" },
+    });
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn((name: string) => (name === "refresh" ? "expired-refresh" : undefined)),
+      locals: { user: { id: 99 } as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+    };
+    const response = buildResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(renewAutomaticSession).toHaveBeenCalledOnce();
+    expect(response.unauthorized).not.toHaveBeenCalled();
+    expect(request.locals.user).toBeUndefined();
+    expect(setAuthCookie).not.toHaveBeenCalled();
+  });
+
+  it("attempts renewal once for an invalid access token and never renews a forbidden user type", async () => {
+    jwtVerify
+      .mockRejectedValueOnce(Object.assign(new Error("expired"), { code: "FAST_JWT_EXPIRED" }))
+      .mockResolvedValueOnce({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "user" }));
+    stubConfig({ find: vi.fn().mockResolvedValue({ id: 1, userType: "user" }) });
+    renewAutomaticSession.mockResolvedValue({
+      accessToken: { token: "next-access", expiresAt: "2030-01-01T00:00:00.000Z" },
+      refreshToken: { token: "next-refresh", expiresAt: "2030-01-02T00:00:00.000Z" },
+    });
+    const middleware = authMiddleware("user", {
+      source: "cookie",
+      key: "access",
+      refresh: { source: "cookie", key: "refresh" },
+    });
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn((name: string) => (name === "access" ? "expired-access" : "refresh")),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+    };
+
+    await middleware(makeCtx({ request, response: buildResponse() }));
+
+    expect(renewAutomaticSession).toHaveBeenCalledTimes(1);
+    expect(jwtVerify).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns 403 for a valid forbidden type without attempting renewal", async () => {
+    jwtVerify.mockResolvedValue({ id: 1, userType: "admin" });
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "admin" }));
+    const response = buildResponse();
+    const middleware = authMiddleware("user", {
+      source: "cookie",
+      key: "access",
+      refresh: { source: "cookie", key: "refresh" },
+    });
+    const request = {
+      authorizationValue: undefined,
+      cookie: vi.fn((name: string) => (name === "access" ? "valid-access" : "refresh")),
+      locals: { user: undefined as unknown },
+      decodedAccessToken: undefined as unknown,
+      method: "GET",
+    };
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.Unauthorized }),
+    );
+    expect(renewAutomaticSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects automatic renewal configurations that cannot safely persist a typed cookie session", () => {
+    expect(() =>
+      authMiddleware("user", {
+        source: "header",
+        refresh: { source: "cookie", key: "refresh" },
+      }),
+    ).toThrow(/cookie access and refresh credentials/);
+    expect(() =>
+      authMiddleware([], {
+        source: "cookie",
+        key: "access",
+        refresh: { source: "cookie", key: "refresh" },
+      }),
+    ).toThrow(/one allowed user type/);
+  });
+
   it("rejects an unauthenticated request even with an empty allow-list", async () => {
     const middleware = authMiddleware([]);
     const request = buildRequest(undefined);
@@ -177,9 +352,43 @@ describe("authMiddleware", () => {
 
     await middleware(makeCtx({ request, response }));
 
-    expect(response.unauthorized).toHaveBeenCalledWith(
+    expect(response.forbidden).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.Unauthorized }),
     );
+    expect(request.locals.user).toBeUndefined();
+  });
+
+  it("uses the configured default user type for the options-only cookie overload", async () => {
+    jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
+    accessTokenFindByToken.mockResolvedValue(liveRow({ userType: "user" }));
+    configKey.mockImplementation((key: string, fallback?: unknown) => {
+      if (key === "auth.defaultUserType") return "user";
+      if (key === "auth.userType.user") return { find: vi.fn().mockResolvedValue({ id: 1 }) };
+      return fallback;
+    });
+
+    const middleware = authMiddleware({ source: "cookie", key: "session" });
+    const request = { ...buildRequest(), method: "GET", cookie: vi.fn(() => "valid-token") };
+    const response = buildResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(request.cookie).toHaveBeenCalledWith("session");
+    expect(request.locals.user).toEqual({ id: 1 });
+  });
+
+  it("continues anonymously only for the explicit optional overload", async () => {
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.defaultUserType" ? "user" : fallback,
+    );
+
+    const middleware = authMiddleware({ optional: true });
+    const request = buildRequest(undefined);
+    const response = buildResponse();
+
+    await middleware(makeCtx({ request, response }));
+
+    expect(response.unauthorized).not.toHaveBeenCalled();
     expect(request.locals.user).toBeUndefined();
   });
 

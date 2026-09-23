@@ -1,6 +1,6 @@
 ---
 name: overview
-description: 'Front-door orientation for `@warlock.js/auth` — JWT authentication for Warlock apps: the `Auth` base model, `authMiddleware` route gate, `authService` (login / logout / refresh with token rotation + replay detection), persisted AccessToken + RefreshToken, multi-user-type support, auth lifecycle events, and two CLI commands. Coupled to `@warlock.js/core`. TRIGGER when: code imports anything from `@warlock.js/auth`; user asks "what does @warlock.js/auth do", "how do I add login to my Warlock app", "JWT auth in Warlock", "protect a route", "multiple user types / admin + user", "refresh token rotation"; package.json adds `@warlock.js/auth`. Skip: specific task already known — load the matching task skill directly (`auth-basics`, `protect-routes`, `handle-login-and-logout`, `register-user`, `manage-tokens`, `customize-user-type`, `run-auth-commands`); non-Warlock apps (this package depends on core); session-cookie auth (this is JWT/token-based).'
+description: "@warlock.js/auth overview for orientation and choosing the focused skill for the task."
 ---
 
 # `@warlock.js/auth` — overview
@@ -21,7 +21,7 @@ Skip if you're not on `@warlock.js/core` (the package depends on it), or if you 
 
 ## The mental model in one paragraph
 
-Your user model extends the `Auth` base model and declares its `userType`. A login flows through `authService.login(Model, credentials, deviceInfo?)`: it verifies the password, issues an access + refresh token pair (persisted as `AccessToken` / `RefreshToken` records), and fires events. `authMiddleware(allowedUserType)` gates routes — the argument is required and always requires a valid token: `[]` allows any authenticated user, a user-type argument restricts to those types (401 otherwise). There is no anonymous mode; public routes simply omit the middleware. Refresh rotates the refresh token and detects replay by revoking the whole token family. CLI commands generate the JWT secret and clean up expired tokens.
+Your user model extends the `Auth` base model and declares its `userType`. A login flows through `authService.login(Model, credentials, deviceInfo?)`: it verifies the password, issues a persisted access + refresh pair, and fires events. `authMiddleware("user")` is a typed hard gate; `authMiddleware()` resolves the configured default type; the object form selects header/cookie credentials, `optional`, and a page-local redirect. Refresh rotation uses a durable token family: family revocation invalidates its refresh and associated access rows. CLI commands generate the JWT secret and clean up expired tokens.
 
 ## Skills index
 
@@ -41,7 +41,7 @@ Start here. The `Auth` base model, `authMiddleware` gate, `authService` (login/l
 Sign up a new user and issue the first token pair — `User.create({ ...password: await hashPassword(plain) })` then `authService.createTokenPair(user)`. For `POST /register`.
 
 #### [`protect-routes`](@warlock.js/auth/protect-routes/SKILL.md)
-`authMiddleware(allowedUserType)` — the argument is required and always requires a valid token: `[]` allows any authenticated user, a user-type argument restricts to those types. Sets `request.locals.user` + `request.decodedAccessToken`, responds 401 on failure.
+`authMiddleware` object and legacy overloads: typed/default hard gates, optional resolution, credential source, and page-local redirects. Sets `request.locals.user` + `request.decodedAccessToken` when a user resolves.
 
 ### Going deeper
 

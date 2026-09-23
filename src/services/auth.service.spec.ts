@@ -7,12 +7,19 @@ const accessTokenDeleteAllForUser = vi.fn();
 const accessTokenPurgeExpired = vi.fn();
 const accessTokenFindNeverExpiring = vi.fn();
 const accessTokenPurgeNeverExpiring = vi.fn();
+const accessTokenDeleteFamilyAndLegacyForUser = vi.fn();
+const accessTokenFindByToken = vi.fn();
+const accessTokenFind = vi.fn();
 
 vi.mock("../models/access-token", () => ({
   AccessToken: {
     issue: (...args: unknown[]) => accessTokenIssue(...args),
+    findByToken: (...args: unknown[]) => accessTokenFindByToken(...args),
+    find: (...args: unknown[]) => accessTokenFind(...args),
     deleteForUser: (...args: unknown[]) => accessTokenDeleteForUser(...args),
     deleteAllForUser: (...args: unknown[]) => accessTokenDeleteAllForUser(...args),
+    deleteFamilyAndLegacyForUser: (...args: unknown[]) =>
+      accessTokenDeleteFamilyAndLegacyForUser(...args),
     purgeExpired: (...args: unknown[]) => accessTokenPurgeExpired(...args),
     findNeverExpiring: (...args: unknown[]) => accessTokenFindNeverExpiring(...args),
     purgeNeverExpiring: (...args: unknown[]) => accessTokenPurgeNeverExpiring(...args),
@@ -23,7 +30,10 @@ vi.mock("../models/access-token", () => ({
 const refreshTokenIssue = vi.fn();
 const refreshTokenEnforceMax = vi.fn();
 const refreshTokenFindByToken = vi.fn();
+const refreshTokenFind = vi.fn();
 const refreshTokenFindForUser = vi.fn();
+const refreshTokenFindInFamily = vi.fn();
+const refreshTokenFamiliesForUser = vi.fn();
 const refreshTokenDeleteForUser = vi.fn();
 const refreshTokenRevokeAllFor = vi.fn();
 const refreshTokenRevokeFamily = vi.fn();
@@ -31,13 +41,18 @@ const refreshTokenPurgeExpired = vi.fn();
 const refreshTokenActiveFor = vi.fn();
 const refreshTokenFindNeverExpiring = vi.fn();
 const refreshTokenPurgeNeverExpiring = vi.fn();
+const refreshTokenAtomic = vi.fn();
 
 vi.mock("../models/refresh-token", () => ({
   RefreshToken: {
     issue: (...args: unknown[]) => refreshTokenIssue(...args),
+    atomic: (...args: unknown[]) => refreshTokenAtomic(...args),
     enforceMax: (...args: unknown[]) => refreshTokenEnforceMax(...args),
     findByToken: (...args: unknown[]) => refreshTokenFindByToken(...args),
+    find: (...args: unknown[]) => refreshTokenFind(...args),
     findForUser: (...args: unknown[]) => refreshTokenFindForUser(...args),
+    findInFamily: (...args: unknown[]) => refreshTokenFindInFamily(...args),
+    familiesForUser: (...args: unknown[]) => refreshTokenFamiliesForUser(...args),
     deleteForUser: (...args: unknown[]) => refreshTokenDeleteForUser(...args),
     revokeAllFor: (...args: unknown[]) => refreshTokenRevokeAllFor(...args),
     revokeFamily: (...args: unknown[]) => refreshTokenRevokeFamily(...args),
@@ -46,6 +61,33 @@ vi.mock("../models/refresh-token", () => ({
     findNeverExpiring: (...args: unknown[]) => refreshTokenFindNeverExpiring(...args),
     purgeNeverExpiring: (...args: unknown[]) => refreshTokenPurgeNeverExpiring(...args),
   },
+}));
+
+const authTokenFamilyFindByFamilyId = vi.fn();
+const authTokenFamilyIssue = vi.fn();
+const authTokenFamilyEnsure = vi.fn();
+const authTokenFamilyActiveFor = vi.fn();
+const authTokenFamilyRevoke = vi.fn();
+
+vi.mock("../models/auth-token-family", () => ({
+  AuthTokenFamily: {
+    findByFamilyId: (...args: unknown[]) => authTokenFamilyFindByFamilyId(...args),
+    issue: (...args: unknown[]) => authTokenFamilyIssue(...args),
+    ensure: (...args: unknown[]) => authTokenFamilyEnsure(...args),
+    activeFor: (...args: unknown[]) => authTokenFamilyActiveFor(...args),
+    revoke: (...args: unknown[]) => authTokenFamilyRevoke(...args),
+  },
+}));
+
+const runTokenFamilyOperation = vi.fn();
+const { TokenFamilyUnavailableError } = vi.hoisted(() => ({
+  TokenFamilyUnavailableError: class TokenFamilyUnavailableError extends Error {},
+}));
+
+vi.mock("./token-family-operation", () => ({
+  afterTokenFamilyOperation: (effect: () => void) => effect(),
+  runTokenFamilyOperation: (...args: unknown[]) => runTokenFamilyOperation(...args),
+  TokenFamilyUnavailableError,
 }));
 
 // ── one-time-token model ────────────────────────────────────────────────────
@@ -132,6 +174,7 @@ function buildUser(overrides: Record<string, unknown> = {}) {
 }
 
 function buildRefreshTokenRow(fields: Record<string, unknown>, isValid = true) {
+  fields = { user_id: 1, user_type: "user", ...fields };
   return {
     id: (fields.id as string) ?? "rt-id",
     isValid,
@@ -140,6 +183,8 @@ function buildRefreshTokenRow(fields: Record<string, unknown>, isValid = true) {
     revoke: vi.fn().mockResolvedValue(undefined),
     markAsUsed: vi.fn().mockResolvedValue(undefined),
     revokeIfActive: vi.fn().mockResolvedValue(true),
+    merge: vi.fn().mockReturnThis(),
+    save: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -155,10 +200,20 @@ beforeEach(() => {
   jwtGenerateRefreshToken.mockResolvedValue("signed-refresh-token");
   refreshTokenIssue.mockResolvedValue(buildRefreshTokenRow({ token: "signed-refresh-token" }));
   refreshTokenEnforceMax.mockResolvedValue(undefined);
+  refreshTokenAtomic.mockResolvedValue(1);
+  accessTokenFindByToken.mockResolvedValue({
+    id: "next-access",
+    isExpired: false,
+    get: (key: string) =>
+      ({ token: "signed-access-token", expires_at: new Date(Date.now() + 60_000).toISOString() })[
+        key
+      ],
+  });
 
   // bulk operations resolve to an empty set by default so the per-token event
   // loops have something iterable
   refreshTokenRevokeAllFor.mockResolvedValue([]);
+  refreshTokenFamiliesForUser.mockResolvedValue([]);
   refreshTokenRevokeFamily.mockResolvedValue([]);
   refreshTokenPurgeExpired.mockResolvedValue([]);
   refreshTokenActiveFor.mockResolvedValue([]);
@@ -167,6 +222,18 @@ beforeEach(() => {
   accessTokenPurgeNeverExpiring.mockResolvedValue([]);
   refreshTokenFindNeverExpiring.mockResolvedValue([]);
   refreshTokenPurgeNeverExpiring.mockResolvedValue([]);
+  authTokenFamilyFindByFamilyId.mockResolvedValue({
+    isRevoked: false,
+    get: (key: string) => ({ user_id: 1, user_type: "user", revision: 0 })[key],
+  });
+  authTokenFamilyIssue.mockResolvedValue({});
+  authTokenFamilyEnsure.mockResolvedValue({ isRevoked: false });
+  authTokenFamilyActiveFor.mockResolvedValue([]);
+  authTokenFamilyRevoke.mockResolvedValue(1);
+  runTokenFamilyOperation.mockImplementation(
+    async (_familyId: string, operation: (family: unknown) => unknown) =>
+      operation({ get: (key: string) => ({ user_id: 1, user_type: "user", revision: 0 })[key] }),
+  );
 });
 
 afterEach(() => {
@@ -221,7 +288,24 @@ describe("authService.generateAccessToken", () => {
 
     await authService.generateAccessToken(buildUser(), custom);
 
-    expect(jwtGenerate).toHaveBeenCalledWith(custom, expect.any(Object));
+    expect(jwtGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ ...custom, jti: expect.any(String) }),
+      expect.any(Object),
+    );
+  });
+
+  it("adds a distinct issuance identifier when two access tokens share the same timestamp", async () => {
+    const user = buildUser();
+
+    await authService.generateAccessToken(user);
+    await authService.generateAccessToken(user);
+
+    const first = defined(jwtGenerate.mock.calls[0], "first signer call")[0] as { jti: string };
+    const second = defined(jwtGenerate.mock.calls[1], "second signer call")[0] as { jti: string };
+
+    expect(first.jti).toEqual(expect.any(String));
+    expect(second.jti).toEqual(expect.any(String));
+    expect(first.jti).not.toBe(second.jti);
   });
 });
 
@@ -319,7 +403,9 @@ describe("authService expiresIn validation", () => {
 
       await authService.generateAccessToken(buildUser());
 
-      const { expiresIn } = defined(jwtGenerate.mock.calls[0], "first call")[1] as { expiresIn: unknown };
+      const { expiresIn } = defined(jwtGenerate.mock.calls[0], "first call")[1] as {
+        expiresIn: unknown;
+      };
 
       expect(typeof expiresIn).toBe("number");
       expect(Number.isFinite(expiresIn as number)).toBe(true);
@@ -369,7 +455,9 @@ describe("authService expiresIn validation", () => {
         expiresIn: 2_592_000_000,
       });
 
-      const { expiresAt } = defined(refreshTokenIssue.mock.calls[0], "first call")[2] as { expiresAt: string };
+      const { expiresAt } = defined(refreshTokenIssue.mock.calls[0], "first call")[2] as {
+        expiresAt: string;
+      };
 
       expect(Number.isNaN(new Date(expiresAt).getTime())).toBe(false);
     });
@@ -399,17 +487,50 @@ describe("authService.createRefreshToken", () => {
       "signed-refresh-token",
       expect.objectContaining({ familyId: "random-family-id" }),
     );
+    expect(authTokenFamilyEnsure).toHaveBeenCalledWith(user, "random-family-id");
   });
 
   it("reuses a supplied familyId instead of generating one", async () => {
     await authService.createRefreshToken(buildUser(), { familyId: "fam-keep" });
 
     expect(randomString).not.toHaveBeenCalled();
+    expect(runTokenFamilyOperation).toHaveBeenCalledWith("fam-keep", expect.any(Function));
     expect(refreshTokenIssue).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ familyId: "fam-keep" }),
     );
+  });
+
+  it("does not persist into a family revoked while supplied-family issuance waits", async () => {
+    runTokenFamilyOperation.mockRejectedValueOnce(new TokenFamilyUnavailableError());
+
+    await expect(
+      authService.createRefreshToken(buildUser(), { familyId: "revoked-during-issue" }),
+    ).rejects.toThrow("Cannot issue tokens for a revoked token family");
+
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
+    expect(jwtGenerateRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("adds a distinct issuance identifier when two refresh tokens share the same timestamp", async () => {
+    const user = buildUser();
+
+    await authService.createRefreshToken(user);
+    await authService.createRefreshToken(user);
+
+    const first = defined(
+      jwtGenerateRefreshToken.mock.calls[0],
+      "first refresh signer call",
+    )[0] as { jti: string };
+    const second = defined(
+      jwtGenerateRefreshToken.mock.calls[1],
+      "second refresh signer call",
+    )[0] as { jti: string };
+
+    expect(first.jti).toEqual(expect.any(String));
+    expect(second.jti).toEqual(expect.any(String));
+    expect(first.jti).not.toBe(second.jti);
   });
 
   it("forwards deviceInfo to the issued token", async () => {
@@ -433,8 +554,41 @@ describe("authService.createTokenPair", () => {
 
     expect(pair.accessToken.token).toBe("signed-access-token");
     expect(pair.refreshToken?.token).toBe("signed-refresh-token");
+    expect(authTokenFamilyEnsure).toHaveBeenCalledWith(user, "random-family-id");
+    expect(accessTokenIssue).toHaveBeenCalledWith(
+      user,
+      "signed-access-token",
+      expect.any(Date),
+      "random-family-id",
+    );
     expect(emit).toHaveBeenCalledWith("token.created", user, pair);
     expect(emit).toHaveBeenCalledWith("session.created", user, expect.anything(), undefined);
+    expect(runTokenFamilyOperation).not.toHaveBeenCalled();
+  });
+
+  it("uses the durable family boundary before issuing into a supplied family", async () => {
+    const user = buildUser();
+
+    await authService.createTokenPair(user, { familyId: "fam-keep" });
+
+    expect(runTokenFamilyOperation).toHaveBeenCalledWith("fam-keep", expect.any(Function));
+    expect(accessTokenIssue).toHaveBeenCalledWith(
+      user,
+      "signed-access-token",
+      expect.any(Date),
+      "fam-keep",
+    );
+  });
+
+  it("does not write a pair when the supplied family becomes unavailable", async () => {
+    runTokenFamilyOperation.mockRejectedValueOnce(new TokenFamilyUnavailableError());
+
+    await expect(
+      authService.createTokenPair(buildUser(), { familyId: "revoked-during-issue" }),
+    ).rejects.toThrow("Cannot issue tokens for a revoked token family");
+
+    expect(accessTokenIssue).not.toHaveBeenCalled();
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
   });
 
   it("omits the refresh token (and session event) when refresh is disabled", async () => {
@@ -451,6 +605,18 @@ describe("authService.createTokenPair", () => {
       expect.anything(),
       undefined,
     );
+    expect(runTokenFamilyOperation).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a successor pair after its family has been revoked", async () => {
+    authTokenFamilyEnsure.mockResolvedValue({ isRevoked: true });
+
+    await expect(
+      authService.createTokenPair(buildUser(), { familyId: "revoked-family" }),
+    ).rejects.toThrow("Cannot issue tokens for a revoked token family");
+    expect(accessTokenIssue).not.toHaveBeenCalled();
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
+    expect(runTokenFamilyOperation).not.toHaveBeenCalled();
   });
 });
 
@@ -528,7 +694,9 @@ describe("authService.refreshTokens", () => {
 
   it("throws when the user type maps to no model", async () => {
     jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "ghost", familyId: "fam" });
-    refreshTokenFindByToken.mockResolvedValue(buildRefreshTokenRow({ family_id: "fam" }, true));
+    refreshTokenFindByToken.mockResolvedValue(
+      buildRefreshTokenRow({ family_id: "fam", user_type: "ghost" }, true),
+    );
 
     await expect(authService.refreshTokens("valid")).rejects.toThrow(
       "User type ghost is unknown type.",
@@ -536,7 +704,7 @@ describe("authService.refreshTokens", () => {
   });
 
   it("keeps the same family_id on the rotated pair", async () => {
-    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-keep" });
     refreshTokenFindByToken.mockResolvedValue(
       buildRefreshTokenRow({ family_id: "fam-keep" }, true),
     );
@@ -548,6 +716,209 @@ describe("authService.refreshTokens", () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ familyId: "fam-keep" }),
+    );
+  });
+});
+
+describe("authService.renewAutomaticSession", () => {
+  function configureAutomatic(user: unknown) {
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.userType.user" ? { find: vi.fn().mockResolvedValue(user) } : fallback,
+    );
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-1" });
+  }
+
+  it.each([{ user_id: 2 }, { user_type: "admin" }, { family_id: "other-family" }])(
+    "rejects signed claims that disagree with the persisted identity: %j",
+    async (mismatch) => {
+      refreshTokenFindByToken.mockResolvedValue(
+        buildRefreshTokenRow({ family_id: "fam-1", ...mismatch }),
+      );
+      configureAutomatic(buildUser());
+      expect(await authService.renewAutomaticSession("old", "user")).toBeNull();
+      expect(await authService.refreshTokens("old")).toBeNull();
+      expect(authTokenFamilyEnsure).not.toHaveBeenCalled();
+      expect(runTokenFamilyOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the legacy refresh API strict on a rotated-token replay", async () => {
+    const old = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    old.revokeIfActive.mockResolvedValue(false);
+    refreshTokenFindByToken.mockResolvedValue(old);
+    configureAutomatic(buildUser());
+
+    await authService.refreshTokens("old");
+
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-1");
+  });
+
+  it("links successors with a targeted update and never saves the stale revoked row", async () => {
+    const old = buildRefreshTokenRow({ id: "old-row", family_id: "fam-1" }, true);
+    refreshTokenFindByToken.mockImplementation(async (token: string) =>
+      token === "old"
+        ? old
+        : buildRefreshTokenRow({ id: "next-refresh", token, family_id: "fam-1" }),
+    );
+    configureAutomatic(buildUser());
+
+    await authService.renewAutomaticSession("old", "user");
+
+    expect(refreshTokenAtomic).toHaveBeenCalledWith(
+      { id: "old-row" },
+      {
+        $set: {
+          successor_access_token_id: "next-access",
+          successor_refresh_token_id: "next-refresh",
+        },
+      },
+    );
+    expect(old.save).not.toHaveBeenCalled();
+  });
+
+  it("fences strict rotation through the family coordinator", async () => {
+    const old = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    refreshTokenFindByToken.mockResolvedValue(old);
+    configureAutomatic(buildUser());
+
+    await authService.refreshTokens("old");
+
+    expect(runTokenFamilyOperation).toHaveBeenCalledWith("fam-1", expect.any(Function));
+  });
+
+  it("returns the identical committed successor for an automatic duplicate without issuing", async () => {
+    const old = buildRefreshTokenRow(
+      {
+        family_id: "fam-1",
+        revoked_at: new Date(),
+        successor_access_token_id: "access-2",
+        successor_refresh_token_id: "refresh-2",
+      },
+      false,
+    );
+    const access = {
+      isExpired: false,
+      get: (key: string) =>
+        ({
+          token: "access-2-token",
+          expires_at: new Date(Date.now() + 30_000).toISOString(),
+          family_id: "fam-1",
+          user_id: 1,
+          user_type: "user",
+        })[key],
+    };
+    const refresh = {
+      isValid: true,
+      get: (key: string) =>
+        ({
+          token: "refresh-2-token",
+          expires_at: new Date(Date.now() + 30_000).toISOString(),
+          family_id: "fam-1",
+          user_id: 1,
+          user_type: "user",
+        })[key],
+    };
+    refreshTokenFindByToken.mockResolvedValue(old);
+    accessTokenFind.mockResolvedValue(access);
+    refreshTokenFind.mockResolvedValue(refresh);
+    configureAutomatic(buildUser());
+
+    await expect(authService.renewAutomaticSession("old", "user")).resolves.toEqual({
+      accessToken: { token: "access-2-token", expiresAt: expect.any(String) },
+      refreshToken: { token: "refresh-2-token", expiresAt: expect.any(String) },
+    });
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
+  });
+
+  it("reloads a stale preflight row inside the family transaction", async () => {
+    const stale = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    const committed = buildRefreshTokenRow(
+      {
+        family_id: "fam-1",
+        revoked_at: new Date(),
+        successor_access_token_id: "access-2",
+        successor_refresh_token_id: "refresh-2",
+      },
+      false,
+    );
+    const fields = {
+      family_id: "fam-1",
+      user_id: 1,
+      user_type: "user",
+      expires_at: new Date(Date.now() + 30_000).toISOString(),
+    };
+    refreshTokenFindByToken.mockResolvedValueOnce(stale).mockResolvedValue(committed);
+    accessTokenFind.mockResolvedValue({
+      isExpired: false,
+      get: (key: string) => ({ ...fields, token: "committed-access" })[key],
+    });
+    refreshTokenFind.mockResolvedValue({
+      isValid: true,
+      get: (key: string) => ({ ...fields, token: "committed-refresh" })[key],
+    });
+    configureAutomatic(buildUser());
+
+    const pair = await authService.renewAutomaticSession("old", "user");
+
+    expect(pair?.refreshToken?.token).toBe("committed-refresh");
+    expect(stale.revokeIfActive).not.toHaveBeenCalled();
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
+    expect(refreshTokenRevokeFamily).not.toHaveBeenCalled();
+  });
+
+  it("does not substitute a later rotated successor", async () => {
+    const old = buildRefreshTokenRow(
+      {
+        family_id: "fam-1",
+        revoked_at: new Date(),
+        successor_access_token_id: "access-2",
+        successor_refresh_token_id: "refresh-2",
+      },
+      false,
+    );
+    refreshTokenFindByToken.mockResolvedValue(old);
+    accessTokenFind.mockResolvedValue({ isExpired: false, get: () => "access-2" });
+    refreshTokenFind.mockResolvedValue({ isValid: false });
+    configureAutomatic(buildUser());
+
+    await expect(authService.renewAutomaticSession("old", "user")).resolves.toBeNull();
+    expect(refreshTokenRevokeFamily).not.toHaveBeenCalled();
+  });
+
+  it("rejects an expired overlap and a mismatched expected user type", async () => {
+    const old = buildRefreshTokenRow(
+      {
+        family_id: "fam-1",
+        revoked_at: new Date(Date.now() - 6_000),
+        successor_access_token_id: "access-2",
+        successor_refresh_token_id: "refresh-2",
+      },
+      false,
+    );
+    refreshTokenFindByToken.mockResolvedValue(old);
+    configureAutomatic(buildUser());
+
+    await expect(authService.renewAutomaticSession("old", "user")).resolves.toBeNull();
+    await expect(authService.renewAutomaticSession("old", "admin")).resolves.toBeNull();
+    expect(accessTokenFind).not.toHaveBeenCalled();
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-1");
+  });
+
+  it("returns no pair when the family transaction fails", async () => {
+    const old = buildRefreshTokenRow({ family_id: "fam-1" }, true);
+    refreshTokenFindByToken.mockResolvedValue(old);
+    configureAutomatic(buildUser());
+    runTokenFamilyOperation.mockRejectedValueOnce(new Error("transaction aborted"));
+
+    await expect(authService.renewAutomaticSession("old", "user")).rejects.toThrow(
+      "transaction aborted",
+    );
+    expect(refreshTokenIssue).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalledWith(
+      "token.refreshed",
+      expect.anything(),
+      expect.anything(),
+      old,
     );
   });
 });
@@ -649,6 +1020,52 @@ describe("authService.completeLogin", () => {
 });
 
 describe("authService.logout", () => {
+  it("orders a strict refresh then logout through the same family coordinator", async () => {
+    const user = buildUser();
+    const token = buildRefreshTokenRow({ family_id: "fam-order" }, true);
+    refreshTokenFindByToken.mockResolvedValue(token);
+    refreshTokenFindForUser.mockResolvedValue(token);
+    jwtVerifyRefreshToken.mockResolvedValue({ userId: 1, userType: "user", familyId: "fam-order" });
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.userType.user" ? { find: vi.fn().mockResolvedValue(user) } : fallback,
+    );
+
+    await authService.refreshTokens("refresh");
+    await authService.logout(user, undefined, "refresh");
+
+    expect(runTokenFamilyOperation.mock.calls.map(([familyId]) => familyId)).toEqual(
+      expect.arrayContaining(["fam-order", "fam-order"]),
+    );
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-order");
+  });
+
+  it("orders automatic renewal then logout through the same family coordinator", async () => {
+    const user = buildUser();
+    const token = buildRefreshTokenRow({ family_id: "fam-auto-order" }, true);
+    refreshTokenFindByToken.mockImplementation(async (value: string) =>
+      value === "refresh"
+        ? token
+        : buildRefreshTokenRow({ id: "successor", token: value, family_id: "fam-auto-order" }),
+    );
+    refreshTokenFindForUser.mockResolvedValue(token);
+    jwtVerifyRefreshToken.mockResolvedValue({
+      userId: 1,
+      userType: "user",
+      familyId: "fam-auto-order",
+    });
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.userType.user" ? { find: vi.fn().mockResolvedValue(user) } : fallback,
+    );
+
+    await authService.renewAutomaticSession("refresh", "user");
+    await authService.logout(user, undefined, "refresh");
+
+    expect(runTokenFamilyOperation.mock.calls.map(([familyId]) => familyId)).toEqual(
+      expect.arrayContaining(["fam-auto-order", "fam-auto-order"]),
+    );
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-auto-order");
+  });
+
   it("removes the access token when supplied", async () => {
     const user = buildUser({ id: 8 });
 
@@ -661,12 +1078,15 @@ describe("authService.logout", () => {
   it("revokes a specific refresh token scoped to the user and emits session.destroyed", async () => {
     const row = buildRefreshTokenRow({});
     refreshTokenFindForUser.mockResolvedValue(row);
+    authTokenFamilyFindByFamilyId.mockResolvedValue({
+      get: (key: string) => ({ user_id: 8, user_type: "user", revision: 0 })[key],
+    });
     const user = buildUser({ id: 8 });
 
     await authService.logout(user, undefined, "the-refresh-token");
 
     expect(refreshTokenFindForUser).toHaveBeenCalledWith(user, "the-refresh-token");
-    expect(row.revoke).toHaveBeenCalledOnce();
+    expect(runTokenFamilyOperation).toHaveBeenCalledWith(row.familyId, expect.any(Function));
     expect(emit).toHaveBeenCalledWith("session.destroyed", user, row);
   });
 
@@ -744,17 +1164,110 @@ describe("authService.revokeAllTokens", () => {
     expect(accessTokenDeleteAllForUser).toHaveBeenCalledWith(user);
     expect(emit).toHaveBeenCalledWith("logout.all", user);
   });
+
+  it("marks every durable family before removing all access tokens", async () => {
+    const user = buildUser({ id: 7 });
+    authTokenFamilyActiveFor.mockResolvedValue([
+      { get: (key: string) => (key === "family_id" ? "family-a" : undefined) },
+      { get: (key: string) => (key === "family_id" ? "family-b" : undefined) },
+    ]);
+
+    await authService.revokeAllTokens(user);
+
+    expect(runTokenFamilyOperation.mock.calls.map(([familyId]) => familyId)).toEqual(
+      expect.arrayContaining(["family-a", "family-b"]),
+    );
+    expect(accessTokenDeleteAllForUser).toHaveBeenCalledWith(user);
+  });
+
+  it("bootstraps pre-upgrade lineages, including a rotated predecessor, before family revocation", async () => {
+    const user = buildUser({ id: 7 });
+    refreshTokenFamiliesForUser.mockResolvedValue([
+      buildRefreshTokenRow({ family_id: "legacy-active" }),
+      buildRefreshTokenRow({ family_id: "legacy-rotated" }),
+    ]);
+    authTokenFamilyActiveFor.mockResolvedValue([
+      { get: (key: string) => (key === "family_id" ? "legacy-active" : undefined) },
+      { get: (key: string) => (key === "family_id" ? "legacy-rotated" : undefined) },
+    ]);
+
+    await authService.revokeAllTokens(user);
+
+    expect(authTokenFamilyEnsure).toHaveBeenCalledWith(user, "legacy-active");
+    expect(authTokenFamilyEnsure).toHaveBeenCalledWith(user, "legacy-rotated");
+    expect(runTokenFamilyOperation.mock.calls.map(([familyId]) => familyId)).toEqual(
+      expect.arrayContaining(["legacy-active", "legacy-rotated"]),
+    );
+  });
 });
 
 describe("authService.revokeTokenFamily", () => {
   it("bulk-revokes the family and emits token.familyRevoked", async () => {
     const rows = [buildRefreshTokenRow({ id: "a" })];
+    authTokenFamilyFindByFamilyId.mockResolvedValue({
+      get: (key: string) => ({ user_id: 1, user_type: "user", revision: 0 })[key],
+    });
     refreshTokenRevokeFamily.mockResolvedValue(rows);
 
     await authService.revokeTokenFamily("fam-42");
 
     expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-42");
+    expect(accessTokenDeleteFamilyAndLegacyForUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, userType: "user" }),
+      "fam-42",
+    );
     expect(emit).toHaveBeenCalledWith("token.familyRevoked", "fam-42", rows);
+  });
+
+  it("treats a repeated family revoke as idempotent cleanup", async () => {
+    authTokenFamilyFindByFamilyId.mockResolvedValue({
+      isRevoked: true,
+      get: (key: string) => ({ user_id: 1, user_type: "user" })[key],
+    });
+
+    await expect(authService.revokeTokenFamily("fam-42")).resolves.toBeUndefined();
+
+    expect(runTokenFamilyOperation).not.toHaveBeenCalled();
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-42");
+    expect(accessTokenDeleteFamilyAndLegacyForUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, userType: "user" }),
+      "fam-42",
+    );
+  });
+
+  it("treats a concurrent durable revoke as idempotent cleanup", async () => {
+    runTokenFamilyOperation.mockRejectedValueOnce(new TokenFamilyUnavailableError());
+
+    await expect(authService.revokeTokenFamily("fam-42")).resolves.toBeUndefined();
+
+    expect(refreshTokenRevokeFamily).toHaveBeenCalledWith("fam-42");
+    expect(accessTokenDeleteFamilyAndLegacyForUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, userType: "user" }),
+      "fam-42",
+    );
+  });
+
+  it("lazily bootstraps a pre-upgrade refresh family before durable revocation", async () => {
+    authTokenFamilyFindByFamilyId.mockResolvedValueOnce(null);
+    refreshTokenFindInFamily.mockResolvedValue(
+      buildRefreshTokenRow({
+        family_id: "legacy-family",
+        user_id: 9,
+        user_type: "user",
+      }),
+    );
+    authTokenFamilyEnsure.mockResolvedValue({
+      isRevoked: false,
+      get: (key: string) => ({ user_id: 9, user_type: "user", revision: 0 })[key],
+    });
+
+    await authService.revokeTokenFamily("legacy-family");
+
+    expect(authTokenFamilyEnsure).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, userType: "user" }),
+      "legacy-family",
+    );
+    expect(runTokenFamilyOperation).toHaveBeenCalledWith("legacy-family", expect.any(Function));
   });
 });
 

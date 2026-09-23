@@ -1,4 +1,5 @@
 import { Random } from "@mongez/reinforcements";
+import { randomUUID } from "node:crypto";
 import type { ChildModel } from "@warlock.js/cascade";
 import {
   config,
@@ -18,11 +19,17 @@ import type {
 } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
+import { AuthTokenFamily } from "../models/auth-token-family";
 import { OneTimeToken } from "../models/one-time-token";
 import { RefreshToken } from "../models/refresh-token";
 import { authConfig } from "./auth-config";
 import { authEvents } from "./auth-events";
 import { isInvalidCredentialError, jwt } from "./jwt";
+import {
+  afterTokenFamilyOperation,
+  runTokenFamilyOperation,
+  TokenFamilyUnavailableError,
+} from "./token-family-operation";
 
 class AuthService {
   /**
@@ -74,15 +81,20 @@ class AuthService {
   private async issueAccessToken(
     user: Auth,
     payload?: Record<string, unknown>,
+    familyId?: string,
   ): Promise<AccessTokenOutput> {
-    const data = payload || this.buildAccessTokenPayload(user);
+    const data = { ...(payload || this.buildAccessTokenPayload(user)), jti: randomUUID() };
     // Validate before signing so an unusable lifetime cannot mint an immortal token.
     const expiresIn = authConfig.accessToken.expiresInMs();
 
     const token = await jwt.generate(data, { expiresIn });
     const expiresAt = new Date(Date.now() + expiresIn);
 
-    await this.accessTokenModel.issue(user, token, expiresAt);
+    if (familyId) {
+      await this.accessTokenModel.issue(user, token, expiresAt, familyId);
+    } else {
+      await this.accessTokenModel.issue(user, token, expiresAt);
+    }
 
     return { token, expiresAt: expiresAt.toISOString() };
   }
@@ -114,10 +126,17 @@ class AuthService {
 
     const familyId = deviceInfo?.familyId || Random.string(32);
 
+    const family = await AuthTokenFamily.ensure(user, familyId);
+
+    if (family.isRevoked) {
+      throw new Error("Cannot issue tokens for a revoked token family");
+    }
+
     const payload = {
       userId: user.id,
       userType: user.userType,
       familyId,
+      jti: randomUUID(),
     };
 
     const expiresAt = new Date(Date.now() + expiresIn).toISOString();
@@ -127,6 +146,40 @@ class AuthService {
     const token = await jwt.generateRefreshToken(payload, { expiresIn });
 
     return this.refreshTokenModel.issue(user, token, { familyId, expiresAt, deviceInfo });
+  }
+
+  /**
+   * Keep issuance into an explicitly reused family in the same durable
+   * transition boundary as rotation and revocation. A new, caller-unspecified
+   * family has no concurrent session to protect and retains the lightweight
+   * issuance path.
+   */
+  private async issueInSuppliedFamily<T>(
+    user: Auth,
+    familyId: string,
+    issue: () => Promise<T>,
+  ): Promise<T> {
+    // Preserve the established error for a family that was already revoked
+    // before issuance started. The coordinator covers a revoke that races
+    // after this observation.
+    const family = await AuthTokenFamily.ensure(user, familyId);
+
+    if (family.isRevoked) {
+      throw new Error("Cannot issue tokens for a revoked token family");
+    }
+
+    try {
+      return await runTokenFamilyOperation(familyId, async () => issue());
+    } catch (error) {
+      // Do not expose a timing-dependent error shape to callers: a family
+      // revoked between ensure() and the transaction is the same unusable
+      // family condition as one found above.
+      if (error instanceof TokenFamilyUnavailableError) {
+        throw new Error("Cannot issue tokens for a revoked token family");
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -141,12 +194,36 @@ class AuthService {
 
     await this.assertCanAuthenticate(user);
 
+    if (deviceInfo?.familyId) {
+      return this.issueInSuppliedFamily(user, deviceInfo.familyId, () =>
+        this.issueRefreshToken(user, deviceInfo),
+      );
+    }
+
     return this.issueRefreshToken(user, deviceInfo);
   }
 
   private async issueTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
-    const accessToken = await this.issueAccessToken(user, deviceInfo?.payload);
-    const refreshToken = await this.issueRefreshToken(user, deviceInfo);
+    const refreshEnabled = authConfig.refreshToken.enabled();
+    const familyId = deviceInfo?.familyId || Random.string(32);
+
+    if (refreshEnabled) {
+      const family = await AuthTokenFamily.ensure(user, familyId);
+
+      if (family.isRevoked) {
+        throw new Error("Cannot issue tokens for a revoked token family");
+      }
+    }
+
+    const accessToken = await this.issueAccessToken(
+      user,
+      deviceInfo?.payload,
+      refreshEnabled ? familyId : undefined,
+    );
+    const refreshToken = await this.issueRefreshToken(
+      user,
+      refreshEnabled ? { ...deviceInfo, familyId } : deviceInfo,
+    );
 
     const tokenPair: TokenPair = {
       accessToken,
@@ -158,10 +235,12 @@ class AuthService {
         : undefined,
     };
 
-    authEvents.emit("token.created", user, tokenPair);
+    afterTokenFamilyOperation(() => authEvents.emit("token.created", user, tokenPair));
 
     if (refreshToken) {
-      authEvents.emit("session.created", user, refreshToken, deviceInfo);
+      afterTokenFamilyOperation(() =>
+        authEvents.emit("session.created", user, refreshToken, deviceInfo),
+      );
     }
 
     return tokenPair;
@@ -172,6 +251,12 @@ class AuthService {
    */
   public async createTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
     await this.assertCanAuthenticate(user);
+
+    if (authConfig.refreshToken.enabled() && deviceInfo?.familyId) {
+      return this.issueInSuppliedFamily(user, deviceInfo.familyId, () =>
+        this.issueTokenPair(user, deviceInfo),
+      );
+    }
 
     return this.issueTokenPair(user, deviceInfo);
   }
@@ -205,52 +290,235 @@ class AuthService {
 
     if (!decoded) return null;
 
-    const refreshToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+    const presentedToken = await this.refreshTokenModel.findByToken(refreshTokenString);
 
-    if (!refreshToken?.isValid) {
-      // An already-invalid token may be a replay of a rotated credential.
-      if (refreshToken) {
-        await this.revokeTokenFamily(refreshToken.familyId);
-      }
+    if (!presentedToken || !this.refreshIdentityMatches(presentedToken, decoded)) return null;
 
-      return null;
-    }
-
-    const UserModel = config.key(`auth.userType.${decoded.userType}`);
-
-    if (!UserModel) {
-      throw new Error(`User type ${decoded.userType} is unknown type.`);
-    }
-
-    const user = (await UserModel.find(decoded.userId)) as Auth | null;
-
-    if (!user) return null;
-
-    if (!(await this.canAuthenticate(user))) return null;
-
-    const rotationEnabled = authConfig.refreshToken.rotation();
-
-    if (rotationEnabled) {
-      const won = await refreshToken.revokeIfActive();
-
-      if (!won) {
-        // A concurrent request already rotated this token.
-        await this.revokeTokenFamily(refreshToken.familyId);
+    await AuthTokenFamily.ensure(
+      { id: decoded.userId, userType: decoded.userType } as Auth,
+      presentedToken.familyId,
+    );
+    return runTokenFamilyOperation(presentedToken.familyId, async () => {
+      // Each serializable attempt must read the current row in its own snapshot.
+      const refreshToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+      if (!refreshToken || !this.refreshIdentityMatches(refreshToken, decoded)) return null;
+      if (!refreshToken.isValid) {
+        // An already-invalid token may be a replay of a rotated credential.
+        if (refreshToken) {
+          await this.revokeTokenFamily(refreshToken.familyId);
+        }
 
         return null;
       }
-    } else {
-      await refreshToken.markAsUsed();
+
+      const UserModel = config.key(`auth.userType.${decoded.userType}`);
+
+      if (!UserModel) {
+        throw new Error(`User type ${decoded.userType} is unknown type.`);
+      }
+
+      const user = (await UserModel.find(decoded.userId)) as Auth | null;
+
+      if (!user) return null;
+
+      if (!(await this.canAuthenticate(user))) return null;
+
+      const rotationEnabled = authConfig.refreshToken.rotation();
+
+      if (rotationEnabled) {
+        const won = await refreshToken.revokeIfActive();
+
+        if (!won) {
+          // A concurrent request already rotated this token.
+          await this.revokeTokenFamily(refreshToken.familyId);
+
+          return null;
+        }
+      } else {
+        await refreshToken.markAsUsed();
+      }
+
+      const newTokenPair = await this.issueTokenPair(user, {
+        ...deviceInfo,
+        familyId: refreshToken.familyId,
+      });
+
+      afterTokenFamilyOperation(() =>
+        authEvents.emit("token.refreshed", user, newTokenPair, refreshToken),
+      );
+
+      return newTokenPair;
+    }).catch((error) => {
+      if (error instanceof TokenFamilyUnavailableError) return null;
+      throw error;
+    });
+  }
+
+  /**
+   * Opt-in browser-session renewal. Unlike {@link refreshTokens}, this permits
+   * a short duplicate presentation to receive the exact committed successor
+   * pair. It is deliberately not used by the legacy/public refresh API.
+   */
+  public async renewAutomaticSession(
+    refreshTokenString: string,
+    expectedUserType: string,
+    options: { overlapMs?: number; deviceInfo?: DeviceInfo } = {},
+  ): Promise<TokenPair | null> {
+    let decoded: { userId: number; userType: string; familyId: string } | null;
+    try {
+      decoded = await jwt.verifyRefreshToken<{
+        userId: number;
+        userType: string;
+        familyId: string;
+      }>(refreshTokenString);
+    } catch (error) {
+      if (isInvalidCredentialError(error)) return null;
+      throw error;
     }
 
-    const newTokenPair = await this.issueTokenPair(user, {
-      ...deviceInfo,
-      familyId: refreshToken.familyId,
+    if (!decoded || decoded.userType !== expectedUserType) return null;
+    const presentedToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+    if (!presentedToken || !this.refreshIdentityMatches(presentedToken, decoded)) return null;
+
+    await AuthTokenFamily.ensure(
+      { id: decoded.userId, userType: decoded.userType } as Auth,
+      presentedToken.familyId,
+    );
+    return runTokenFamilyOperation(presentedToken.familyId, async () => {
+      // A retry can follow another process's committed rotation. Never reuse
+      // a model captured before the transaction or before a failed attempt.
+      const oldToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+      if (!oldToken || !this.refreshIdentityMatches(oldToken, decoded)) return null;
+      if (!oldToken.isValid) {
+        const successor = await this.readAutomaticSuccessor(oldToken, decoded, options.overlapMs);
+        if (successor) return successor;
+        if (
+          this.isAutomaticOverlapOpen(oldToken, options.overlapMs) &&
+          this.hasSuccessor(oldToken)
+        ) {
+          return null;
+        }
+        await this.revokeTokenFamily(oldToken.familyId);
+        return null;
+      }
+
+      const UserModel = config.key(`auth.userType.${decoded.userType}`);
+      if (!UserModel) throw new Error(`User type ${decoded.userType} is unknown type.`);
+      const user = (await UserModel.find(decoded.userId)) as Auth | null;
+      if (!user || !(await this.canAuthenticate(user))) return null;
+
+      if (!(await oldToken.revokeIfActive())) {
+        // A newer successor is never substituted here. A stale automatic
+        // response must fail quietly rather than revoke a legitimate family.
+        const currentToken = await this.refreshTokenModel.findByToken(refreshTokenString);
+        if (!currentToken) return null;
+        const successor = await this.readAutomaticSuccessor(
+          currentToken,
+          decoded,
+          options.overlapMs,
+        );
+        if (successor) return successor;
+        if (
+          this.isAutomaticOverlapOpen(currentToken, options.overlapMs) &&
+          this.hasSuccessor(currentToken)
+        )
+          return null;
+        await this.revokeTokenFamily(oldToken.familyId);
+        return null;
+      }
+
+      const pair = await this.issueTokenPair(user, {
+        ...options.deviceInfo,
+        familyId: oldToken.familyId,
+      });
+      const successorAccess = await this.accessTokenModel.findByToken(pair.accessToken.token);
+      const successorRefresh = pair.refreshToken
+        ? await this.refreshTokenModel.findByToken(pair.refreshToken.token)
+        : null;
+      if (!successorAccess || !successorRefresh) {
+        throw new Error("Automatic renewal did not persist a complete successor pair");
+      }
+
+      // `revokeIfActive()` updates the database, not this hydrated instance.
+      // Saving that stale instance would write its old `revoked_at: null` back
+      // and reopen the predecessor. Update only the successor columns instead.
+      const linked = await this.refreshTokenModel.atomic(
+        { id: oldToken.id },
+        {
+          $set: {
+            successor_access_token_id: successorAccess.id,
+            successor_refresh_token_id: successorRefresh.id,
+          },
+        },
+      );
+      if (linked !== 1) throw new Error("Automatic renewal could not link its successor pair");
+      afterTokenFamilyOperation(() => authEvents.emit("token.refreshed", user, pair, oldToken));
+      return pair;
+    }).catch((error) => {
+      if (error instanceof TokenFamilyUnavailableError) return null;
+      throw error;
     });
+  }
 
-    authEvents.emit("token.refreshed", user, newTokenPair, refreshToken);
+  private automaticOverlapMs(overlapMs: number | undefined): number {
+    return typeof overlapMs === "number" && Number.isFinite(overlapMs)
+      ? Math.max(0, Math.min(10_000, overlapMs))
+      : 5000;
+  }
 
-    return newTokenPair;
+  private refreshIdentityMatches(
+    token: RefreshToken,
+    decoded: { userId: string | number; userType: string; familyId: string },
+  ): boolean {
+    return (
+      token.familyId === decoded.familyId &&
+      token.get("user_id") === decoded.userId &&
+      token.get("user_type") === decoded.userType
+    );
+  }
+
+  private hasSuccessor(oldToken: RefreshToken): boolean {
+    return Boolean(
+      oldToken.get("successor_access_token_id") && oldToken.get("successor_refresh_token_id"),
+    );
+  }
+
+  private isAutomaticOverlapOpen(oldToken: RefreshToken, overlapMs: number | undefined): boolean {
+    const revokedAt = oldToken.get<Date | undefined>("revoked_at");
+    const window = this.automaticOverlapMs(overlapMs);
+    const elapsed = revokedAt ? Date.now() - new Date(revokedAt).getTime() : NaN;
+    return window > 0 && elapsed >= 0 && elapsed <= window;
+  }
+
+  private async readAutomaticSuccessor(
+    oldToken: RefreshToken,
+    decoded: { userId: number; userType: string; familyId: string },
+    overlapMs: number | undefined,
+  ): Promise<TokenPair | null> {
+    if (!this.isAutomaticOverlapOpen(oldToken, overlapMs)) return null;
+    const accessId = oldToken.get<string | undefined>("successor_access_token_id");
+    const refreshId = oldToken.get<string | undefined>("successor_refresh_token_id");
+    if (!accessId || !refreshId) return null;
+    const [access, refresh] = await Promise.all([
+      this.accessTokenModel.find(accessId),
+      this.refreshTokenModel.find(refreshId),
+    ]);
+    if (!access || access.isExpired || !refresh?.isValid) return null;
+    if (
+      access.get("family_id") !== decoded.familyId ||
+      refresh.get("family_id") !== decoded.familyId ||
+      access.get("user_id") !== decoded.userId ||
+      refresh.get("user_id") !== decoded.userId ||
+      access.get("user_type") !== decoded.userType ||
+      refresh.get("user_type") !== decoded.userType
+    )
+      return null;
+    const accessExpiry = new Date(access.get("expires_at")).getTime();
+    if (!Number.isFinite(accessExpiry) || accessExpiry <= Date.now()) return null;
+    return {
+      accessToken: { token: access.get("token"), expiresAt: access.get("expires_at") },
+      refreshToken: { token: refresh.get("token"), expiresAt: refresh.get("expires_at") },
+    };
   }
 
   /**
@@ -375,7 +643,7 @@ class AuthService {
       const token = await this.refreshTokenModel.findForUser(user, refreshToken);
 
       if (token) {
-        await token.revoke();
+        await this.revokeTokenFamily(token.familyId);
         authEvents.emit("session.destroyed", user, token);
       }
     } else {
@@ -415,16 +683,32 @@ class AuthService {
 
   /**
    * Revoke every active refresh token for the user and delete their access
-   * tokens — "log out of all devices". Revocation is a single bulk update; an
+   * tokens — "log out of all devices". Each durable family is first marked through its revision coordinator; an
    * event fires per revoked token.
    */
   public async revokeAllTokens(user: Auth): Promise<void> {
-    const revokedTokens = await this.refreshTokenModel.revokeAllFor(user);
+    // Upgrade existing installations lazily before the family scan. Include
+    // revoked rows: a rotation may have revoked its predecessor while its
+    // durable family still needs logout's marker.
+    const existingRows = await this.refreshTokenModel.familiesForUser(user);
 
-    for (const token of revokedTokens) {
-      authEvents.emit("token.revoked", user, token);
+    for (const token of existingRows) {
+      await AuthTokenFamily.ensure(user, token.familyId);
     }
 
+    const families = await AuthTokenFamily.activeFor(user);
+
+    for (const family of families) {
+      await this.revokeTokenFamily(family.get<string>("family_id"));
+    }
+
+    // A deployment can still have rows created before the additive migration
+    // ran; retain the old bulk cleanup as a final conservative backstop.
+    const legacyTokens = await this.refreshTokenModel.revokeAllFor(user);
+
+    for (const token of legacyTokens) {
+      authEvents.emit("token.revoked", user, token);
+    }
     await this.removeAllAccessTokens(user);
 
     authEvents.emit("logout.all", user);
@@ -434,9 +718,70 @@ class AuthService {
    * Revoke an entire token family — rotation breach containment.
    */
   public async revokeTokenFamily(familyId: string): Promise<void> {
-    const revokedTokens = await this.refreshTokenModel.revokeFamily(familyId);
+    let family = await AuthTokenFamily.findByFamilyId(familyId);
 
-    authEvents.emit("token.familyRevoked", familyId, revokedTokens);
+    if (!family) {
+      const legacyToken = await this.refreshTokenModel.findInFamily(familyId);
+
+      if (!legacyToken) return;
+
+      family = await AuthTokenFamily.ensure(
+        {
+          id: legacyToken.get("user_id"),
+          userType: legacyToken.get<string>("user_type"),
+        } as Auth,
+        familyId,
+      );
+    }
+
+    const user = {
+      id: family.get("user_id"),
+      userType: family.get<string>("user_type"),
+    } as Auth;
+
+    if (family.isRevoked) {
+      // Logout and replay containment are idempotent. Re-run cleanup because a
+      // request that lost the original race may have observed stale rows.
+      const revokedTokens = await this.refreshTokenModel.revokeFamily(familyId);
+      await this.accessTokenModel.deleteFamilyAndLegacyForUser(user, familyId);
+      afterTokenFamilyOperation(() =>
+        authEvents.emit("token.familyRevoked", familyId, revokedTokens),
+      );
+
+      return;
+    }
+
+    let revokedTokens: RefreshToken[];
+    try {
+      revokedTokens = await runTokenFamilyOperation(familyId, async (currentFamily) => {
+        const familyUser = {
+          id: currentFamily.get("user_id"),
+          userType: currentFamily.get<string>("user_type"),
+        } as Auth;
+        const revision = currentFamily.get<number>("revision");
+        const revoked = await AuthTokenFamily.revoke(familyId, revision);
+
+        if (revoked !== 1) {
+          throw new Error("Token family revoke lost its revision transition");
+        }
+
+        const familyTokens = await this.refreshTokenModel.revokeFamily(familyId);
+        await this.accessTokenModel.deleteFamilyAndLegacyForUser(familyUser, familyId);
+
+        return familyTokens;
+      });
+    } catch (error) {
+      if (!(error instanceof TokenFamilyUnavailableError)) throw error;
+
+      // Another request committed the revoke between the read above and its
+      // CAS. A second logout is successful after idempotent cleanup.
+      revokedTokens = await this.refreshTokenModel.revokeFamily(familyId);
+      await this.accessTokenModel.deleteFamilyAndLegacyForUser(user, familyId);
+    }
+
+    afterTokenFamilyOperation(() =>
+      authEvents.emit("token.familyRevoked", familyId, revokedTokens),
+    );
   }
 
   /**

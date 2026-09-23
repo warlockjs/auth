@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── models (auth.service.ts imports these at module scope) ─────────────────
 vi.mock("../models/access-token", () => ({ AccessToken: {} }));
 vi.mock("../models/refresh-token", () => ({ RefreshToken: {} }));
+vi.mock("../models/auth-token-family", () => ({ AuthTokenFamily: {} }));
 vi.mock("../models/one-time-token", () => ({ OneTimeToken: {} }));
 
 // ── core ────────────────────────────────────────────────────────────────────

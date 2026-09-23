@@ -4,6 +4,23 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.19.0
+
+### Added
+
+- `authMiddleware()` now uses `auth.defaultUserType` (or the sole configured user type), and the object overload accepts `{ source, key, optional, refresh, redirect }`. A page-local `redirect` changes only page-route authentication failures; APIs retain `401`. Legacy `authMiddleware(userType, "header" | "cookie:name")` calls remain supported.
+- Durable token families: token pairs associate access and refresh rows with `AuthTokenFamily`; family revoke atomically stamps the family, revokes its refresh rows, and removes its associated access rows. During the additive upgrade, unassociated legacy access rows are revoked conservatively only for the same user and type. Register `authMigrations` and run pending migrations.
+- Automatic cookie renewal is opt-in through the middleware `refresh` descriptor. The finalized coordinator permits only an exact, immediately active successor pair during a bounded duplicate window (default five seconds; configurable from zero through ten seconds). It does not broaden legacy `authService.refreshTokens` replay behavior. A duplicate within that window is tolerated deliberately; after it, old-token reuse remains a replay and revokes the family. Family logout makes late cookies unusable. This does not claim to solve arbitrary out-of-order HTTP cookie delivery.
+
+### Changed
+
+- Refined package skill-discovery descriptions and regenerated the llms projections.
+
+### Fixed
+
+- Refresh attempts emit token notifications after their owned transaction commits, discarding notifications from rolled-back retries.
+- Issuing into an explicitly reused token family now shares its durable revocation boundary, preventing credentials from being written after concurrent logout.
+
 ## 5.17.0 - 2026-09-21
 
 ### Security

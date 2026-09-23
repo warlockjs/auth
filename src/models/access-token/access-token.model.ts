@@ -15,6 +15,8 @@ export const accessTokenSchema = v.object({
   token: v.string().required(),
   user_id: v.scalar().required(),
   user_type: v.string().required(),
+  /** Null for tokens issued before family tracking was introduced. */
+  family_id: v.string().optional(),
   expires_at: v.date().required(),
 });
 
@@ -96,11 +98,12 @@ export class AccessToken extends Model {
   /**
    * Persist a freshly-signed access token for the user.
    */
-  public static issue(user: Auth, token: string, expiresAt: Date) {
+  public static issue(user: Auth, token: string, expiresAt: Date, familyId?: string) {
     return this.create({
       token,
       user_id: user.id,
       user_type: user.userType,
+      family_id: familyId,
       expires_at: expiresAt,
     });
   }
@@ -124,6 +127,16 @@ export class AccessToken extends Model {
    */
   public static deleteAllForUser(user: Auth) {
     return this.delete({ user_id: user.id });
+  }
+
+  /**
+   * Delete every access token attached to one family, plus pre-family rows for
+   * the same user type. The latter is deliberately conservative during the
+   * additive upgrade: old access rows cannot be assigned safely to a family.
+   */
+  public static async deleteFamilyAndLegacyForUser(user: Auth, familyId: string): Promise<void> {
+    await this.delete({ user_id: user.id, user_type: user.userType, family_id: familyId });
+    await this.delete({ user_id: user.id, user_type: user.userType, family_id: null });
   }
 
   /**

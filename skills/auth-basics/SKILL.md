@@ -1,6 +1,6 @@
 ---
 name: auth-basics
-description: 'Start with @warlock.js/auth — JWT auth, Auth base model, authMiddleware route gate, authService (login / logout / refresh), AccessToken + RefreshToken persistence, multi-user-type support. Triggers: `Auth`, `authMiddleware`, `authService`, `AccessToken`, `RefreshToken`, `authMigrations`; "set up auth in a new app", "which auth skill do I need", "JWT authentication overview", "wire warlock auth"; typical import `import { authMiddleware, authService, Auth, authMigrations } from "@warlock.js/auth"`. Skip: routing — `@warlock.js/auth/protect-routes/SKILL.md`; login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `next-auth`, `lucia-auth`, `auth0`.'
+description: "Start here for @warlock.js/auth configuration, user models, credentials, and application session flows."
 ---
 
 # Auth basics
@@ -20,7 +20,7 @@ npm install @warlock.js/auth
 1. **Users extend `Auth`.** Your `User`, `Admin`, etc. extend the shared base model that knows how to issue tokens and verify passwords. Multiple user types coexist (see [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md)).
 2. **`auth.userType.<name>` config maps a user-type slug to the model class.** The middleware uses this to hydrate the right model from a token.
 3. **Tokens persist.** Both `AccessToken` and `RefreshToken` are Cascade models — issuing a token writes a row; logout / revoke deletes or marks-revoked. Stateless JWT verification + stateful revocation list.
-4. **`authMiddleware(allowedUserType)` gates routes.** The argument is required and a valid token is always required. `[]` → any authenticated user; a user-type → required auth scoped to those types. Public routes omit the middleware entirely.
+4. **`authMiddleware` gates or resolves routes.** Use `authMiddleware("user")` for a typed hard gate, `authMiddleware()` for the configured/default user type, or `authMiddleware({ source: "cookie", key: "token", optional: true })` for a public route that receives a valid user when present. The object form can set a page-local login redirect. Legacy `authMiddleware(userType, "cookie:name")` remains valid.
 5. **`authService.login(Model, credentials, deviceInfo?)` is the full happy path.** Verifies credentials, creates token pair (access + refresh), emits events, returns `{ user, tokens }`.
 6. **Refresh-token rotation is on by default.** Each refresh consumes the old token and issues new ones from the same "family" — replay detection revokes the family.
 7. **JWT secret lives in the env.** Generate with `warlock jwt.generate` (see [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md)).
@@ -71,6 +71,7 @@ export default {
     user: User,
     // admin: Admin,  // for multi-user-type
   },
+  defaultUserType: "user", // needed for authMiddleware() when multiple types exist
   accessToken: {
     secret: env("JWT_SECRET"),
     expiresIn: "1h",

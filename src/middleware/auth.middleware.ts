@@ -1,6 +1,10 @@
 import { config, type HttpContext, t, type Middleware, type Request } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
-import type { TokenFrom } from "../contracts/types";
+import type {
+  AuthCredentialDescriptor,
+  AuthMiddlewareOptions,
+  TokenFrom,
+} from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import { authConfig } from "../services/auth-config";
 import { authService } from "../services/auth.service";
@@ -34,8 +38,13 @@ type UnauthorizedPayload = { error: string; errorCode: string };
  * on — never the absolute URL: a relative target cannot be turned into an
  * open-redirect off this app's origin.
  */
-function rejectUnauthorized({ request, response }: HttpContext, payload: UnauthorizedPayload) {
-  const loginPath = authConfig.pageAuth.loginPath();
+function rejectUnauthorized(
+  { request, response }: HttpContext,
+  payload: UnauthorizedPayload,
+  redirect?: AuthMiddlewareOptions["redirect"],
+) {
+  const loginPath = redirect?.to ?? authConfig.pageAuth.loginPath();
+  const returnUrlParam = redirect?.returnUrlParam ?? authConfig.pageAuth.returnUrlParam();
 
   if (loginPath && request.route?.isPage) {
     // Under an active `web.localeRouting` strategy, the login destination
@@ -47,9 +56,7 @@ function rejectUnauthorized({ request, response }: HttpContext, payload: Unautho
     const separator = destination.includes("?") ? "&" : "?";
     const returnUrl = encodeURIComponent(request.url);
 
-    return response.redirect(
-      `${destination}${separator}${authConfig.pageAuth.returnUrlParam()}=${returnUrl}`,
-    );
+    return response.redirect(`${destination}${separator}${returnUrlParam}=${returnUrl}`);
   }
 
   return response.unauthorized(payload);
@@ -93,17 +100,44 @@ function readCredential(request: Request, tokenFrom: TokenFrom): string {
   return value ? String(value) : "";
 }
 
+function tokenFromDescriptor(descriptor: Partial<AuthCredentialDescriptor>): TokenFrom {
+  if (!descriptor.source || descriptor.source === "header") return "header";
+
+  if (!descriptor.key) {
+    throw new Error("authMiddleware cookie credentials require a cookie key.");
+  }
+
+  return `cookie:${descriptor.key}`;
+}
+
+function resolveAllowedTypes(value: string | string[] | undefined): string[] {
+  if (value !== undefined) return Array.isArray(value) ? value : [value];
+
+  const configuredDefault = config.key("auth.defaultUserType") as string | undefined;
+
+  if (configuredDefault) return [configuredDefault];
+
+  const userTypes = config.key("auth.userType", {}) as Record<string, unknown>;
+  const configuredTypes = Object.keys(userTypes);
+
+  if (configuredTypes.length === 1) return configuredTypes;
+
+  throw new Error(
+    "authMiddleware requires a user type when auth.defaultUserType is unset and multiple user types exist.",
+  );
+}
+
 /**
- * Build a route gate that always requires an authenticated request.
+ * Build a route gate. Authentication is required unless optional is explicit.
  *
- * The argument is mandatory and selects which user types may pass:
+ * An omitted user type selects the configured default; an explicit argument
+ * selects which user types may pass:
  * - `[]` — any authenticated user (token required, type not checked).
  * - `"admin"` / `["admin", "staff"]` — token required AND the user's
  *   `userType` must be one of the listed types.
  *
- * There is no anonymous/optional mode: a request without a valid access
- * token is always rejected with `401`. Routes that should be public
- * simply omit the middleware.
+ * `{ optional: true }` allows anonymous requests. All other forms reject
+ * missing or invalid credentials with 401, or a configured page redirect.
  *
  * `tokenFrom` selects one credential source and defaults to `"header"`.
  * A single source avoids making credential precedence depend on array order.
@@ -114,38 +148,66 @@ function readCredential(request: Request, tokenFrom: TokenFrom): string {
  * router.get("/back-office", authMiddleware(["admin", "staff"]), backOfficeController);
  * router.get("/browser-account", authMiddleware([], "cookie:token"), accountController);
  */
+export function authMiddleware(): Middleware;
+export function authMiddleware(options: AuthMiddlewareOptions): Middleware;
 export function authMiddleware(
   allowedUserType: string | string[],
-  tokenFrom: TokenFrom = "header",
+  options?: AuthMiddlewareOptions,
+): Middleware;
+export function authMiddleware(
+  allowedUserType: string | string[],
+  tokenFrom?: TokenFrom,
+): Middleware;
+export function authMiddleware(
+  userTypeOrOptions?: string | string[] | AuthMiddlewareOptions,
+  legacyTokenFromOrOptions?: TokenFrom | AuthMiddlewareOptions,
 ): Middleware {
-  const allowedTypes = Array.isArray(allowedUserType) ? allowedUserType : [allowedUserType];
+  const options =
+    typeof userTypeOrOptions === "object" && !Array.isArray(userTypeOrOptions)
+      ? userTypeOrOptions
+      : typeof legacyTokenFromOrOptions === "object"
+        ? legacyTokenFromOrOptions
+        : undefined;
+  const selectedUserType =
+    typeof userTypeOrOptions === "string" || Array.isArray(userTypeOrOptions)
+      ? userTypeOrOptions
+      : undefined;
+  const allowedTypes = resolveAllowedTypes(selectedUserType);
+  const legacyTokenFrom =
+    typeof legacyTokenFromOrOptions === "string" ? legacyTokenFromOrOptions : undefined;
+  const tokenFrom = options ? tokenFromDescriptor(options) : (legacyTokenFrom ?? "header");
+  const refreshCredential = options?.refresh ? tokenFromDescriptor(options.refresh) : undefined;
+  const renewalUserType = allowedTypes.length === 1 ? allowedTypes[0] : undefined;
+
+  if (
+    refreshCredential &&
+    (tokenFrom === "header" || refreshCredential === "header" || !renewalUserType)
+  ) {
+    throw new Error(
+      "authMiddleware automatic renewal requires one allowed user type and cookie access and refresh credentials.",
+    );
+  }
+
+  const optional = options?.optional === true;
 
   const auth: Middleware = async ({ request, response }) => {
-    const authorizationValue = readCredential(request, tokenFrom);
+    const reject = (payload: UnauthorizedPayload) =>
+      rejectUnauthorized({ request, response }, payload, options?.redirect);
+    let authorizationValue = readCredential(request, tokenFrom);
+    let renewalAttempted = false;
 
-    if (!authorizationValue) {
-      return rejectUnauthorized(
-        { request, response },
-        {
-          error: t("auth.errors.missingAccessToken"),
-          errorCode: AuthErrorCodes.MissingAccessToken,
-        },
-      );
-    }
-
-    // CSRF Origin check: only in scope for a cookie-sourced
-    // credential on an unsafe method. Header-token auth and safe methods
-    // (GET/HEAD/OPTIONS) never reach `assertCsrfOriginAllowed`.
-    if (requiresCsrfOriginCheck(tokenFrom, request.method)) {
+    // Renewal can mint cookies, so a cookie-authenticated unsafe request must
+    // pass the same CSRF check even when its access cookie is missing.
+    if (
+      (authorizationValue || refreshCredential) &&
+      requiresCsrfOriginCheck(tokenFrom, request.method)
+    ) {
       try {
         assertCsrfOriginAllowed(request);
       } catch (error) {
-        if (!(error instanceof CsrfOriginMismatchError)) {
-          throw error;
-        }
+        if (!(error instanceof CsrfOriginMismatchError)) throw error;
 
         log.error("http", "auth", error);
-
         return response.forbidden({
           error: t("auth.errors.csrfOriginMismatch"),
           errorCode: AuthErrorCodes.CsrfOriginMismatch,
@@ -153,86 +215,94 @@ export function authMiddleware(
       }
     }
 
-    let decoded: DecodedAccessToken;
+    const renew = async (): Promise<boolean> => {
+      if (!refreshCredential || renewalAttempted) return false;
 
-    // The ONLY try in this middleware, and it wraps a single call. Everything
-    // after it is storage and configuration, where an exception means the
-    // server is broken rather than the caller (D5).
-    try {
-      decoded = await jwt.verify<DecodedAccessToken>(authorizationValue);
-    } catch (error) {
-      if (!isInvalidCredentialError(error)) {
-        // A DB/cache outage, a missing `JWT_SECRET`, or any other server-side
-        // fault — not a verdict on this credential. Propagate to the request's
-        // normal error path (a 500 monitoring can see) instead of answering
-        // 401 and clearing the caller's session.
-        throw error;
+      renewalAttempted = true;
+      const refreshToken = readCredential(request, refreshCredential);
+      if (!refreshToken) return false;
+
+      const pair = await authService.renewAutomaticSession(refreshToken, renewalUserType!, {
+        overlapMs: options?.refresh?.overlapMs,
+      });
+      if (!pair?.refreshToken) return false;
+
+      authService.setAuthCookie(response, pair.accessToken, {
+        name: tokenFrom.slice("cookie:".length),
+      });
+      authService.setAuthCookie(response, pair.refreshToken, {
+        name: refreshCredential.slice("cookie:".length),
+      });
+      authorizationValue = pair.accessToken.token;
+
+      return true;
+    };
+
+    let decoded: DecodedAccessToken;
+    let accessToken: AccessToken | null;
+
+    // At most one renewal is attempted per request. The renewed access token
+    // is checked through this normal path; no handler or unsafe request replay
+    // is performed.
+    while (true) {
+      if (!authorizationValue) {
+        request.locals.user = undefined;
+        if (await renew()) continue;
+        if (optional) return;
+        return reject({
+          error: t("auth.errors.missingAccessToken"),
+          errorCode: AuthErrorCodes.MissingAccessToken,
+        });
       }
 
-      // A forged, malformed, expired token — or (D6) a `tokenType` mismatch —
-      // is not an incident: it is a request carrying a credential the server
-      // will never accept.
-      log.error("http", "auth", error);
-
-      // Clearing rather than leaving a stale value matters: a request that
-      // failed authentication must not carry the identity of whoever
-      // `request.locals.user` last held (see the two-sided spec below that
-      // pins this — removing the clear must make the previous identity
-      // survive).
-      request.locals.user = undefined;
-
-      return rejectUnauthorized(
-        { request, response },
-        {
+      try {
+        decoded = await jwt.verify<DecodedAccessToken>(authorizationValue);
+      } catch (error) {
+        if (!isInvalidCredentialError(error)) throw error;
+        log.error("http", "auth", error);
+        request.locals.user = undefined;
+        if (await renew()) continue;
+        if (optional) return;
+        return reject({
           error: t("auth.errors.invalidAccessToken"),
           errorCode: AuthErrorCodes.InvalidAccessToken,
-        },
-      );
-    }
+        });
+      }
 
-    request.decodedAccessToken = decoded;
+      request.decodedAccessToken = decoded;
+      const AccessTokenModel = config.key("auth.accessToken.model", AccessToken);
+      accessToken = await AccessTokenModel.findByToken(authorizationValue);
 
-    // A valid signature is not enough — the token must still exist in storage,
-    // so deleting the row (logout) invalidates it before its JWT expiry.
-    const AccessTokenModel = config.key("auth.accessToken.model", AccessToken);
-    const accessToken = await AccessTokenModel.findByToken(authorizationValue);
-
-    if (!accessToken) {
-      return rejectUnauthorized(
-        { request, response },
-        {
+      if (!accessToken) {
+        request.locals.user = undefined;
+        if (await renew()) continue;
+        if (optional) return;
+        return reject({
           error: t("auth.errors.invalidAccessToken"),
           errorCode: AuthErrorCodes.InvalidAccessToken,
-        },
-      );
-    }
+        });
+      }
 
-    // ... and the row must still be live. Existence alone was the whole check
-    // before 4.12.0, so a row whose own `expires_at` had passed still opened
-    // the gate. The stored expiry is now enforced, and the dead row is
-    // removed on the way out rather than left for the cleanup command.
-    if (accessTokenRowIsExpired(accessToken)) {
-      await accessToken.destroy();
-
-      return rejectUnauthorized(
-        { request, response },
-        {
+      if (accessTokenRowIsExpired(accessToken)) {
+        await accessToken.destroy();
+        request.locals.user = undefined;
+        if (await renew()) continue;
+        if (optional) return;
+        return reject({
           error: t("auth.errors.invalidAccessToken"),
           errorCode: AuthErrorCodes.InvalidAccessToken,
-        },
-      );
-    }
+        });
+      }
 
+      break;
+    }
     const userType = decoded.userType ?? accessToken.userType;
 
     if (allowedTypes.length && !allowedTypes.includes(userType)) {
-      return rejectUnauthorized(
-        { request, response },
-        {
-          error: t("auth.errors.unauthorized"),
-          errorCode: AuthErrorCodes.Unauthorized,
-        },
-      );
+      return response.forbidden({
+        error: t("auth.errors.unauthorized"),
+        errorCode: AuthErrorCodes.Unauthorized,
+      });
     }
 
     const UserModel = config.key(`auth.userType.${userType}`);
@@ -247,24 +317,23 @@ export function authMiddleware(
 
     if (!currentUser) {
       await accessToken.destroy();
+      request.locals.user = undefined;
+      if (optional) return;
 
-      return rejectUnauthorized(
-        { request, response },
-        {
-          error: t("auth.errors.invalidAccessToken"),
-          errorCode: AuthErrorCodes.InvalidAccessToken,
-        },
-      );
+      return reject({
+        error: t("auth.errors.invalidAccessToken"),
+        errorCode: AuthErrorCodes.InvalidAccessToken,
+      });
     }
 
     if (!(await authService.canAuthenticate(currentUser))) {
-      return rejectUnauthorized(
-        { request, response },
-        {
-          error: t("auth.errors.unauthorized"),
-          errorCode: AuthErrorCodes.Unauthorized,
-        },
-      );
+      request.locals.user = undefined;
+      if (optional) return;
+
+      return reject({
+        error: t("auth.errors.unauthorized"),
+        errorCode: AuthErrorCodes.Unauthorized,
+      });
     }
 
     request.locals.user = currentUser;

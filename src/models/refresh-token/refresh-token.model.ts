@@ -24,6 +24,9 @@ export const refreshTokenSchema = v.object({
   expires_at: v.date().required(),
   last_used_at: v.date().default(() => new Date()),
   revoked_at: v.date().optional(),
+  /** The successor pair a bounded concurrent renewal may reuse. */
+  successor_access_token_id: v.string().optional(),
+  successor_refresh_token_id: v.string().optional(),
   device_info: v.record(v.any()).optional(),
 });
 
@@ -173,6 +176,19 @@ export class RefreshToken extends Model {
    */
   public static findForUser(user: Auth, token: string): Promise<RefreshToken | null> {
     return this.first({ token, user_id: user.id });
+  }
+
+  /** Find any member of a family, including an already-revoked legacy member. */
+  public static findInFamily(familyId: string): Promise<RefreshToken | null> {
+    return this.first({ family_id: familyId });
+  }
+
+  /**
+   * Every refresh lineage for a user, including rotated rows. Logout uses this
+   * to bootstrap durable family records before it starts family revocations.
+   */
+  public static familiesForUser(user: Auth): Promise<RefreshToken[]> {
+    return this.query().where({ user_id: user.id, user_type: user.userType }).get();
   }
 
   /**
