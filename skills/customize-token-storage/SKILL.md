@@ -1,6 +1,6 @@
 ---
 name: customize-token-storage
-description: "Customize token storage in @warlock.js/auth; use when you need to customize token storage."
+description: 'Override the persisted AccessToken / RefreshToken models to add columns (multi-tenant `organization_id`, device metadata), rename, or change storage — without forking the package. Extend the model + `schema.extend(...)`, register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`, override `issue()` to populate the new column, and add a migration. Triggers: `accessToken.model`, `refreshToken.model`, `AccessToken.issue`, `RefreshToken.issue`, `accessTokenSchema`, `refreshTokenSchema`, "add a column to the token table", "multi-tenant tokens", "organization_id on access token", "override the token model", "custom token storage"; typical import `import { AccessToken, accessTokenSchema } from "@warlock.js/auth"`. Skip: multiple user TYPES (not token storage) — `@warlock.js/auth/customize-user-type/SKILL.md`; the token lifecycle API — `@warlock.js/auth/manage-tokens/SKILL.md`; the config blocks themselves — `@warlock.js/auth/auth-basics/SKILL.md`.'
 ---
 
 # Customize token storage

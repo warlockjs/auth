@@ -1,6 +1,6 @@
 ---
 name: manage-tokens
-description: "Manage tokens in @warlock.js/auth; use when you need to manage tokens."
+description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; CLI cleanup — `@warlock.js/auth/run-auth-commands/SKILL.md`; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
 ---
 
 # Manage tokens

@@ -1,6 +1,6 @@
 ---
 name: handle-login-and-logout
-description: "Login + logout in @warlock.js/auth; use when you need to handle login and logout."
+description: 'Run the full login flow via authService.login(Model, credentials, deviceInfo?) — verify password, create access + refresh token pair, fire events. Logout via authService.logout(user, accessToken?, refreshToken?) revokes tokens. Triggers: `authService.login`, `authService.logout`, `authService.attemptLogin`, `authService.refreshTokens`, `authService.revokeAllTokens`, `authEvents`; "build a login endpoint", "POST /login controller", "logout from all devices", "verify credentials and issue tokens"; typical import `import { authService, authEvents } from "@warlock.js/auth"`. Skip: token internals — `@warlock.js/auth/manage-tokens/SKILL.md`; sign-up — `@warlock.js/auth/register-user/SKILL.md`; competing libs `passport-local`, `next-auth` credentials.'
 ---
 
 # Login + logout

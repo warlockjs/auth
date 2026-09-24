@@ -1,6 +1,6 @@
 ---
 name: throttle-login-attempts
-description: "Throttle login attempts with loginThrottleMiddleware in @warlock.js/auth; use when you need to throttle login attempts."
+description: 'Brute-force / credential-stuffing protection via `loginThrottleMiddleware` — a failure-aware route gate that counts only failed logins (resets on success), locks per-account and per-source after a threshold, and rejects pre-controller with 429 so the DB lookup and bcrypt verify are skipped. Cache-backed (shared across replicas), fixed-window, fails open on a cache outage. Triggers: `loginThrottleMiddleware`, `AuthErrorCodes.TooManyAttempts`, `EC004`, "rate limit login", "brute force protection", "lock account after failed logins", "throttle login attempts", "too many login attempts 429"; typical import `import { loginThrottleMiddleware } from "@warlock.js/auth"`. Skip: generic per-route request rate limiting that counts every request (use core `middleware.rateLimit`); gating a route by auth — `@warlock.js/auth/protect-routes/SKILL.md`; issuing tokens — `@warlock.js/auth/handle-login-and-logout/SKILL.md`.'
 ---
 
 # Throttle login attempts with `loginThrottleMiddleware`
