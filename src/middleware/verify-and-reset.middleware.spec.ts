@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const cacheGet = vi.fn();
 const cacheSet = vi.fn();
 const cacheRemove = vi.fn();
-const cacheUpdate = vi.fn();
+const cacheIncrement = vi.fn();
 
 vi.mock("@warlock.js/cache", () => ({
   cache: {
     get: (...args: unknown[]) => cacheGet(...args),
     set: (...args: unknown[]) => cacheSet(...args),
     remove: (...args: unknown[]) => cacheRemove(...args),
-    update: (...args: unknown[]) => cacheUpdate(...args),
+    increment: (...args: unknown[]) => cacheIncrement(...args),
   },
 }));
 
@@ -97,7 +97,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(configValues)) delete configValues[key];
   cacheGet.mockResolvedValue(null);
-  cacheUpdate.mockImplementation(async () => 1);
+  cacheIncrement.mockResolvedValue(1);
 });
 
 describe("tokenIssueThrottleMiddleware", () => {
@@ -107,21 +107,21 @@ describe("tokenIssueThrottleMiddleware", () => {
     await tokenIssueThrottleMiddleware()(makeCtx({ request, response }));
     await response.fireSent();
 
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.email.sara@x.io",
-      expect.any(Function),
-      expect.anything(),
-    );
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.ip.1.2.3.4",
-      expect.any(Function),
-      expect.anything(),
-    );
+    expect(cacheSet).toHaveBeenCalledWith("auth.throttle.count.email.sara@x.io", 0, {
+      ttl: "1h",
+      onConflict: "create",
+    });
+    expect(cacheSet).toHaveBeenCalledWith("auth.throttle.count.ip.1.2.3.4", 0, {
+      ttl: "1h",
+      onConflict: "create",
+    });
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.email.sara@x.io");
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.ip.1.2.3.4");
     expect(cacheRemove).not.toHaveBeenCalled();
   });
 
   it("locks after 3 issue requests by default and rejects with 429", async () => {
-    cacheUpdate.mockResolvedValue(3);
+    cacheIncrement.mockResolvedValue(3);
     const response = buildResponse(true);
 
     await tokenIssueThrottleMiddleware()(makeCtx({ request, response }));
@@ -149,12 +149,11 @@ describe("tokenConsumeThrottleMiddleware", () => {
     await tokenConsumeThrottleMiddleware()(makeCtx({ request, response: failed }));
     await failed.fireSent();
 
-    expect(cacheUpdate).toHaveBeenCalledTimes(1);
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.ip.1.2.3.4",
-      expect.any(Function),
-      expect.anything(),
-    );
+    expect(cacheSet).toHaveBeenCalledWith("auth.throttle.count.ip.1.2.3.4", 0, {
+      ttl: "15m",
+      onConflict: "create",
+    });
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.ip.1.2.3.4");
 
     const ok = buildResponse(true);
     await tokenConsumeThrottleMiddleware()(makeCtx({ request, response: ok }));
