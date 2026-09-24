@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.20.0
+
+### Changed
+
+- `loginThrottleMiddleware` now counts failures with an atomic `cache.increment`. The first failure opens the window with a create-only `cache.set` carrying the TTL, so counts are exact across servers on the redis/pg cache drivers (concurrent failures are no longer lost to a read-modify-write). Thresholds, window and lockout behaviour are unchanged. The memory cache driver is per-process, so counts there are per-process too.
+
 ## 5.19.0 - 2026-09-23
 
 ### Added
