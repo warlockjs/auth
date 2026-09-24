@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const cacheGet = vi.fn();
 const cacheSet = vi.fn();
 const cacheRemove = vi.fn();
-const cacheUpdate = vi.fn();
+const cacheIncrement = vi.fn();
 
 vi.mock("@warlock.js/cache", () => ({
   cache: {
     get: (...args: unknown[]) => cacheGet(...args),
     set: (...args: unknown[]) => cacheSet(...args),
     remove: (...args: unknown[]) => cacheRemove(...args),
-    update: (...args: unknown[]) => cacheUpdate(...args),
+    increment: (...args: unknown[]) => cacheIncrement(...args),
   },
 }));
 
@@ -91,9 +91,9 @@ describe("loginThrottleMiddleware", () => {
   });
 
   it("seeds the failure counter with a TTL on the first failure (fixed window)", async () => {
-    // counter absent → loginThrottle seeds TTL on first failure
+    // the create-only seed opens the window; the bump is an atomic increment
     cacheGet.mockResolvedValue(null);
-    cacheUpdate.mockResolvedValue(1);
+    cacheIncrement.mockResolvedValue(1);
 
     const middleware = loginThrottleMiddleware({ max: 5, window: "10m", by: ["email"] });
     const request = buildRequest();
@@ -102,19 +102,23 @@ describe("loginThrottleMiddleware", () => {
     await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.email.sara@example.com",
-      expect.any(Function),
-      { ttl: "10m" },
-    );
+    expect(cacheSet).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com", 0, {
+      ttl: "10m",
+      onConflict: "create",
+    });
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com");
     // no lock yet — count (1) is below max (5)
-    expect(cacheSet).not.toHaveBeenCalled();
+    expect(cacheSet).not.toHaveBeenCalledWith(
+      "auth.throttle.lock.email.sara@example.com",
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("sets the lock key once the failure counter reaches `max`", async () => {
-    // counter already exists (any non-null) → TTL preserved, not re-seeded
+    // counter already exists → the create-only seed is a no-op (TTL preserved)
     cacheGet.mockResolvedValue(0);
-    cacheUpdate.mockResolvedValue(5);
+    cacheIncrement.mockResolvedValue(5);
 
     const middleware = loginThrottleMiddleware({
       max: 5,
@@ -127,11 +131,13 @@ describe("loginThrottleMiddleware", () => {
     await middleware(makeCtx({ request, response }));
     await response.fireSent();
 
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.email.sara@example.com",
-      expect.any(Function),
-      undefined, // TTL preserved across bumps — fixed window
-    );
+    // The window is only ever seeded create-only, so an existing counter's TTL
+    // survives the bump — fixed window.
+    expect(cacheSet).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com", 0, {
+      ttl: expect.anything(),
+      onConflict: "create",
+    });
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com");
     expect(cacheSet).toHaveBeenCalledWith(
       "auth.throttle.lock.email.sara@example.com",
       true,
@@ -151,7 +157,7 @@ describe("loginThrottleMiddleware", () => {
 
     expect(cacheRemove).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com");
     expect(cacheRemove).toHaveBeenCalledWith("auth.throttle.lock.email.sara@example.com");
-    expect(cacheUpdate).not.toHaveBeenCalled();
+    expect(cacheIncrement).not.toHaveBeenCalled();
   });
 
   it("no-ops when no identifier can be extracted (request lacks email and ip)", async () => {
@@ -170,7 +176,7 @@ describe("loginThrottleMiddleware", () => {
 
   it("tracks every identifier independently — bumps the counter for each", async () => {
     cacheGet.mockResolvedValue(null);
-    cacheUpdate.mockResolvedValue(1);
+    cacheIncrement.mockResolvedValue(1);
 
     const middleware = loginThrottleMiddleware({ by: ["email", "ip"] });
     const request = buildRequest();
@@ -180,16 +186,8 @@ describe("loginThrottleMiddleware", () => {
     await response.fireSent();
 
     // both the per-account AND the per-source counter must be bumped
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.email.sara@example.com",
-      expect.any(Function),
-      expect.any(Object),
-    );
-    expect(cacheUpdate).toHaveBeenCalledWith(
-      "auth.throttle.count.ip.1.2.3.4",
-      expect.any(Function),
-      expect.any(Object),
-    );
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.email.sara@example.com");
+    expect(cacheIncrement).toHaveBeenCalledWith("auth.throttle.count.ip.1.2.3.4");
   });
 
   it("fails open when the cache rejects (driver outage must not escalate to an auth outage)", async () => {

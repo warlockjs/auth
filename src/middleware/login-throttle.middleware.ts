@@ -210,15 +210,17 @@ export function loginThrottleMiddleware(options: LoginThrottleOptions = {}): Mid
         }
 
         for (const identifier of identifiers) {
-          const existing = await cache.get(counterKey(identifier));
-          const ttlOption = existing === null ? { ttl: window } : undefined;
-          const count = await cache.update<number>(
-            counterKey(identifier),
-            (current) => (current ?? 0) + 1,
-            ttlOption,
-          );
+          const key = counterKey(identifier);
 
-          if ((count ?? 0) >= max) {
+          // Open the window on the first failure: the create-only write means
+          // only one of several racing servers sets the TTL, and an existing
+          // window keeps its deadline (fixed window). The bump itself is an
+          // atomic increment, so concurrent failures across servers are never
+          // lost (redis INCRBY / pg upsert keep the window's TTL).
+          await cache.set(key, 0, { ttl: window, onConflict: "create" });
+          const count = await cache.increment(key);
+
+          if (count >= max) {
             await cache.set(lockKey(identifier), true, { ttl: lockoutDuration });
           }
         }
