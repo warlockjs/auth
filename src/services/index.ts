@@ -6,3 +6,4 @@ export * from "./jwt";
 export * from "./email-verification";
 export * from "./one-time-tokens";
 export * from "./password-reset";
+export * from "./resolve-request-user";

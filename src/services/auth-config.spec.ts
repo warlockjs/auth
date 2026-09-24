@@ -122,3 +122,19 @@ describe("authConfig expiresInMs", () => {
     expect(authConfig.accessToken.expiresInMs()).toBe(3_155_760_000_000);
   });
 });
+
+describe("authConfig cookie.refreshName", () => {
+  it("defaults to refresh_token", () => {
+    configKey.mockImplementation((_key: string, fallback?: unknown) => fallback);
+
+    expect(authConfig.cookie.refreshName()).toBe("refresh_token");
+  });
+
+  it("honours the auth.cookie.refreshName override", () => {
+    configKey.mockImplementation((key: string, fallback?: unknown) =>
+      key === "auth.cookie.refreshName" ? "rt" : fallback,
+    );
+
+    expect(authConfig.cookie.refreshName()).toBe("rt");
+  });
+});

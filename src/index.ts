@@ -13,4 +13,5 @@ export * from "./otp";
 export * from "./passkeys";
 export * from "./providers";
 export * from "./services";
+export * from "./session";
 export * from "./utils";

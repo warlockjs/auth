@@ -36,5 +36,10 @@ export interface RequestUser {}
 declare module "@warlock.js/core" {
   interface RequestLocals {
     user?: RequestUser;
+    /**
+     * The in-flight or settled result of `resolveRequestUser`, memoised per
+     * request so every caller shares one verify, one lookup and one renewal.
+     */
+    session?: Promise<any>;
   }
 }

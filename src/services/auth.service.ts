@@ -5,6 +5,7 @@ import {
   config,
   ForbiddenError,
   hashPassword,
+  type Request,
   type Response,
   verifyPassword,
 } from "@warlock.js/core";
@@ -17,6 +18,7 @@ import type {
   SetAuthCookieOptions,
   TokenPair,
 } from "../contracts/types";
+import { assertCsrfOriginAllowed } from "../middleware/csrf-origin-check";
 import { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
 import { AuthTokenFamily } from "../models/auth-token-family";
@@ -362,7 +364,7 @@ class AuthService {
   public async renewAutomaticSession(
     refreshTokenString: string,
     expectedUserType: string,
-    options: { overlapMs?: number; deviceInfo?: DeviceInfo } = {},
+    options: { overlapMs?: number; deviceInfo?: DeviceInfo; maxAgeMs?: number } = {},
   ): Promise<TokenPair | null> {
     let decoded: { userId: number; userType: string; familyId: string } | null;
     try {
@@ -398,6 +400,15 @@ class AuthService {
         ) {
           return null;
         }
+        await this.revokeTokenFamily(oldToken.familyId);
+        return null;
+      }
+
+      // Rotation never extends a family past `maxAgeMs` from its first issue.
+      if (
+        options.maxAgeMs !== undefined &&
+        (await this.familyExceedsMaxAge(oldToken.familyId, options.maxAgeMs))
+      ) {
         await this.revokeTokenFamily(oldToken.familyId);
         return null;
       }
@@ -458,6 +469,33 @@ class AuthService {
       if (error instanceof TokenFamilyUnavailableError) return null;
       throw error;
     });
+  }
+
+  /**
+   * Whether the family's first issue is older than `maxAgeMs`. The start is the
+   * family row's `created_at`, falling back to its oldest refresh token when
+   * the row carries none (an upserted legacy family).
+   */
+  private async familyExceedsMaxAge(familyId: string, maxAgeMs: number): Promise<boolean> {
+    const family = await AuthTokenFamily.findByFamilyId(familyId);
+    let started: unknown = family?.get("created_at");
+
+    if (!started) {
+      const oldest = await this.refreshTokenModel
+        .query()
+        .where({ family_id: familyId })
+        .orderBy("created_at", "asc")
+        .first();
+
+      started = oldest?.get("created_at");
+    }
+
+    const startedAt = started ? new Date(started as string | number | Date).getTime() : NaN;
+
+    // Unknown start: nothing to measure against, so the cap cannot apply.
+    if (!Number.isFinite(startedAt)) return false;
+
+    return Date.now() - startedAt > maxAgeMs;
   }
 
   private automaticOverlapMs(overlapMs: number | undefined): number {
@@ -604,6 +642,38 @@ class AuthService {
     await this.assertCanAuthenticate(user);
 
     return this.finalizeLogin(user, deviceInfo);
+  }
+
+  /**
+   * Cookie login for a browser: same-origin check, credential login, then both
+   * session cookies. Unlike the default CSRF guard, the Origin/Referer check
+   * runs even when the request carries no cookies (login CSRF): a missing or
+   * cross-site Origin/Referer throws `CsrfOriginMismatchError` before any
+   * credential is looked at. Returns `null` on bad credentials.
+   */
+  public async loginWithSessionCookies<T extends Auth>(
+    request: Request,
+    response: Response,
+    Model: ChildModel<T>,
+    credentials: AuthCredentials,
+    deviceInfo?: DeviceInfo,
+  ): Promise<LoginResult<T> | null> {
+    assertCsrfOriginAllowed(request);
+
+    const result = await this.login(Model, credentials, deviceInfo);
+
+    if (!result) return null;
+
+    if (result.tokens.refreshToken) {
+      this.setSessionCookies(response, {
+        accessToken: result.tokens.accessToken,
+        refreshToken: result.tokens.refreshToken,
+      });
+    } else {
+      this.setAuthCookie(response, result.tokens.accessToken);
+    }
+
+    return result;
   }
 
   /** The one token-issuing tail every login method shares. */
@@ -925,6 +995,48 @@ class AuthService {
     const path = options.path ?? authConfig.cookie.path();
 
     response.clearCookie(name, { path });
+  }
+
+  /**
+   * Write the access and refresh cookies of a browser session. Both are
+   * `HttpOnly`, `SameSite=Lax`, `Path=/` (the refresh cookie must reach every
+   * page) and `Secure` outside development, named by `auth.cookie.name` and
+   * `auth.cookie.refreshName`. Each `Max-Age` is derived from its token's
+   * `expiresAt`, so the cookie lives exactly as long as the token.
+   *
+   * @example
+   * const { tokens } = await authService.login(User, credentials);
+   * authService.setSessionCookies(response, tokens);
+   */
+  public setSessionCookies(
+    response: Response,
+    tokens: { accessToken: AccessTokenOutput; refreshToken: AccessTokenOutput },
+  ): void {
+    const cookies = [
+      [authConfig.cookie.name(), tokens.accessToken],
+      [authConfig.cookie.refreshName(), tokens.refreshToken],
+    ] as const;
+
+    for (const [name, token] of cookies) {
+      const maxAge = this.cookieMaxAgeFromToken(token);
+
+      response.cookie(name, token.token, {
+        raw: true,
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        ...(maxAge !== undefined ? { maxAge } : {}),
+      });
+    }
+  }
+
+  /**
+   * Clear both session cookies {@link setSessionCookies} wrote, on `Path=/`.
+   * Pair it with {@link logout} after the token rows are revoked.
+   */
+  public clearSessionCookies(response: Response): void {
+    response.clearCookie(authConfig.cookie.name(), { path: "/" });
+    response.clearCookie(authConfig.cookie.refreshName(), { path: "/" });
   }
 }
 

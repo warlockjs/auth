@@ -185,6 +185,8 @@ export const authConfig = {
   cookie: {
     /** Cookie name `setAuthCookie`/`clearAuthCookie` use. @default "access_token" */
     name: (): string => config.key("auth.cookie.name", "access_token"),
+    /** Refresh-token cookie name the session cookie helpers use. @default "refresh_token" */
+    refreshName: (): string => config.key("auth.cookie.refreshName", "refresh_token"),
     /** Cookie `Path` attribute `setAuthCookie`/`clearAuthCookie` use. @default "/" */
     path: (): string => config.key("auth.cookie.path", "/"),
   },

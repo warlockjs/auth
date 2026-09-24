@@ -1,14 +1,12 @@
-import { config, type HttpContext, t, type Middleware, type Request } from "@warlock.js/core";
+import { config, type HttpContext, t, type Middleware } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
 import type {
   AuthCredentialDescriptor,
   AuthMiddlewareOptions,
   TokenFrom,
 } from "../contracts/types";
-import { AccessToken } from "../models/access-token";
 import { authConfig } from "../services/auth-config";
-import { authService } from "../services/auth.service";
-import { isInvalidCredentialError, jwt } from "../services/jwt";
+import { readCredential, resolveRequestUserOutcome } from "../services/resolve-request-user";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 import {
   assertCsrfOriginAllowed,
@@ -60,44 +58,6 @@ function rejectUnauthorized(
   }
 
   return response.unauthorized(payload);
-}
-
-/**
- * Decoded access-token claims the middleware reads. The full payload carries
- * more (`created_at`, `tokenType`, `iat`, `exp`) but only these drive routing.
- */
-type DecodedAccessToken = {
-  id: string | number;
-  userType?: string;
-};
-
-/**
- * Whether the persisted row says the token is dead.
- *
- * The answer belongs to the model (`AccessToken.isExpired`), so a registered
- * override that renames or reshapes its expiry column stays authoritative and
- * the middleware never touches a column name. A row that cannot answer at all —
- * an override that dropped the getter — is treated as **expired**: the failure
- * mode of this whole defect class was a check that quietly answered "fine" when
- * it had nothing to check, and that is not repeated here.
- *
- * This is independent of the `exp` claim required by `jwt.verify`. That guard
- * catches a token whose *claims* carry no deadline; this one catches a token
- * whose *row* says the deadline has passed — a logged-out or expired session
- * whose JWT is still within its own lifetime. Neither subsumes the other.
- */
-function accessTokenRowIsExpired(accessToken: AccessToken): boolean {
-  return typeof accessToken.isExpired === "boolean" ? accessToken.isExpired : true;
-}
-
-function readCredential(request: Request, tokenFrom: TokenFrom): string {
-  if (tokenFrom === "header") {
-    return request.authorizationValue;
-  }
-
-  const value = request.cookie(tokenFrom.slice("cookie:".length));
-
-  return value ? String(value) : "";
 }
 
 function tokenFromDescriptor(descriptor: Partial<AuthCredentialDescriptor>): TokenFrom {
@@ -175,7 +135,27 @@ export function authMiddleware(
   const allowedTypes = resolveAllowedTypes(selectedUserType);
   const legacyTokenFrom =
     typeof legacyTokenFromOrOptions === "string" ? legacyTokenFromOrOptions : undefined;
-  const tokenFrom = options ? tokenFromDescriptor(options) : (legacyTokenFrom ?? "header");
+  const dualSources = options?.sources?.length ? options.sources.map(tokenFromDescriptor) : undefined;
+
+  if (dualSources && options?.source) {
+    throw new Error("authMiddleware accepts either `source` or `sources`, not both.");
+  }
+
+  const dualHeader = dualSources?.includes("header") ?? false;
+  const dualCookies = dualSources?.filter(source => source !== "header") ?? [];
+
+  if (dualSources && (dualCookies.length > 1 || dualSources.length - dualCookies.length > 1)) {
+    throw new Error("authMiddleware `sources` accepts at most one header and one cookie.");
+  }
+
+  // With dual sources the configured cookie is the base credential; the header
+  // is chosen per request, ahead of it.
+  const cookieTokenFrom: TokenFrom = dualSources
+    ? (dualCookies[0] ?? "header")
+    : options
+      ? tokenFromDescriptor(options)
+      : (legacyTokenFrom ?? "header");
+  const tokenFrom = cookieTokenFrom;
   const refreshCredential = options?.refresh ? tokenFromDescriptor(options.refresh) : undefined;
   const renewalUserType = allowedTypes.length === 1 ? allowedTypes[0] : undefined;
 
@@ -193,14 +173,18 @@ export function authMiddleware(
   const auth: Middleware = async ({ request, response }) => {
     const reject = (payload: UnauthorizedPayload) =>
       rejectUnauthorized({ request, response }, payload, options?.redirect);
-    let authorizationValue = readCredential(request, tokenFrom);
-    let renewalAttempted = false;
+
+    // A present Authorization header always wins and never falls back to the
+    // cookie: the credential used is the header, so no renewal and no CSRF check.
+    const headerWins = dualHeader && Boolean(request.authorizationValue);
+    const usedTokenFrom: TokenFrom = headerWins ? "header" : tokenFrom;
+    const usedRefresh = headerWins ? undefined : refreshCredential;
 
     // Renewal can mint cookies, so a cookie-authenticated unsafe request must
     // pass the same CSRF check even when its access cookie is missing.
     if (
-      (authorizationValue || refreshCredential) &&
-      requiresCsrfOriginCheck(tokenFrom, request.method)
+      (readCredential(request, usedTokenFrom) || usedRefresh) &&
+      requiresCsrfOriginCheck(usedTokenFrom, request.method)
     ) {
       try {
         assertCsrfOriginAllowed(request);
@@ -215,128 +199,46 @@ export function authMiddleware(
       }
     }
 
-    const renew = async (): Promise<boolean> => {
-      if (!refreshCredential || renewalAttempted) return false;
+    const outcome = await resolveRequestUserOutcome(request, response, {
+      tokenFrom: usedTokenFrom,
+      refreshCredential: usedRefresh,
+      overlapMs: options?.refresh?.overlapMs,
+      allowedTypes,
+      renewalUserType,
+    });
 
-      renewalAttempted = true;
-      const refreshToken = readCredential(request, refreshCredential);
-      if (!refreshToken) return false;
-
-      const pair = await authService.renewAutomaticSession(refreshToken, renewalUserType!, {
-        overlapMs: options?.refresh?.overlapMs,
-      });
-      if (!pair?.refreshToken) return false;
-
-      authService.setAuthCookie(response, pair.accessToken, {
-        name: tokenFrom.slice("cookie:".length),
-      });
-      authService.setAuthCookie(response, pair.refreshToken, {
-        name: refreshCredential.slice("cookie:".length),
-      });
-      authorizationValue = pair.accessToken.token;
-
-      return true;
-    };
-
-    let decoded: DecodedAccessToken;
-    let accessToken: AccessToken | null;
-
-    // At most one renewal is attempted per request. The renewed access token
-    // is checked through this normal path; no handler or unsafe request replay
-    // is performed.
-    while (true) {
-      if (!authorizationValue) {
-        request.locals.user = undefined;
-        if (await renew()) continue;
-        if (optional) return;
-        return reject({
-          error: t("auth.errors.missingAccessToken"),
-          errorCode: AuthErrorCodes.MissingAccessToken,
-        });
-      }
-
-      try {
-        decoded = await jwt.verify<DecodedAccessToken>(authorizationValue);
-      } catch (error) {
-        if (!isInvalidCredentialError(error)) throw error;
-        log.error("http", "auth", error);
-        request.locals.user = undefined;
-        if (await renew()) continue;
-        if (optional) return;
-        return reject({
-          error: t("auth.errors.invalidAccessToken"),
-          errorCode: AuthErrorCodes.InvalidAccessToken,
-        });
-      }
-
-      request.decodedAccessToken = decoded;
-      const AccessTokenModel = config.key("auth.accessToken.model", AccessToken);
-      accessToken = await AccessTokenModel.findByToken(authorizationValue);
-
-      if (!accessToken) {
-        request.locals.user = undefined;
-        if (await renew()) continue;
-        if (optional) return;
-        return reject({
-          error: t("auth.errors.invalidAccessToken"),
-          errorCode: AuthErrorCodes.InvalidAccessToken,
-        });
-      }
-
-      if (accessTokenRowIsExpired(accessToken)) {
-        await accessToken.destroy();
-        request.locals.user = undefined;
-        if (await renew()) continue;
-        if (optional) return;
-        return reject({
-          error: t("auth.errors.invalidAccessToken"),
-          errorCode: AuthErrorCodes.InvalidAccessToken,
-        });
-      }
-
-      break;
+    if (outcome.user) {
+      request.locals.user = outcome.user;
+      return;
     }
-    const userType = decoded.userType ?? accessToken.userType;
 
-    if (allowedTypes.length && !allowedTypes.includes(userType)) {
+    if (outcome.failure === "forbidden") {
       return response.forbidden({
         error: t("auth.errors.unauthorized"),
         errorCode: AuthErrorCodes.Unauthorized,
       });
     }
 
-    const UserModel = config.key(`auth.userType.${userType}`);
+    if (optional) return;
 
-    if (!UserModel) {
-      // Configuration, not credentials. Throwing keeps a mis-registered app
-      // loudly broken instead of quietly rejecting every request of this type.
-      throw new Error(`User type ${userType} is unknown type.`);
-    }
-
-    const currentUser = await UserModel.find(decoded.id);
-
-    if (!currentUser) {
-      await accessToken.destroy();
-      request.locals.user = undefined;
-      if (optional) return;
-
+    if (outcome.failure === "missing") {
       return reject({
-        error: t("auth.errors.invalidAccessToken"),
-        errorCode: AuthErrorCodes.InvalidAccessToken,
+        error: t("auth.errors.missingAccessToken"),
+        errorCode: AuthErrorCodes.MissingAccessToken,
       });
     }
 
-    if (!(await authService.canAuthenticate(currentUser))) {
-      request.locals.user = undefined;
-      if (optional) return;
-
+    if (outcome.failure === "unauthorized") {
       return reject({
         error: t("auth.errors.unauthorized"),
         errorCode: AuthErrorCodes.Unauthorized,
       });
     }
 
-    request.locals.user = currentUser;
+    return reject({
+      error: t("auth.errors.invalidAccessToken"),
+      errorCode: AuthErrorCodes.InvalidAccessToken,
+    });
   };
 
   return auth;

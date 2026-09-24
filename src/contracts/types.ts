@@ -52,6 +52,14 @@ export interface AuthRefreshCredentialDescriptor extends AuthCredentialDescripto
 /** Per-route authentication behavior for the object middleware overload. */
 export interface AuthMiddlewareOptions extends Partial<AuthCredentialDescriptor> {
   optional?: boolean;
+  /**
+   * Accept both a header and a cookie credential (at most one of each).
+   * Precedence is fixed and independent of array order: a present
+   * `Authorization` header wins, an invalid header rejects and never falls back
+   * to the cookie, and renewal plus the CSRF Origin check apply only when the
+   * cookie is the credential actually used. Cannot be combined with `source`.
+   */
+  sources?: AuthCredentialDescriptor[];
   /** Opt-in automatic renewal credential. Cookie sources only. */
   refresh?: AuthRefreshCredentialDescriptor;
   redirect?: { to: string; returnUrlParam?: string };
@@ -409,6 +417,11 @@ export type CookieAuthConfig = {
    * @default "access_token"
    */
   name?: string;
+  /**
+   * Cookie name the session helpers write and clear for the refresh token.
+   * @default "refresh_token"
+   */
+  refreshName?: string;
   /**
    * Cookie `Path` attribute.
    * @default "/"
