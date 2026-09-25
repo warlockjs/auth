@@ -4,7 +4,7 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
-## 5.21.0
+## 5.21.0 - 2026-09-25
 
 ### Added
 
@@ -18,7 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING:** `authMiddleware` takes an ordered header/cookie `sources` list; a present Authorization header always wins and never falls back to the cookie, so an invalid header now returns `401`.
 - JWTs carry a random `jti`, so tokens issued in the same second differ.
 
-## 5.20.1 - 2026-09-24
 
 ### Changed
 
