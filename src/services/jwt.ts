@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createSigner, createVerifier, type SignerOptions, type VerifierOptions } from "fast-jwt";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 import { authConfig } from "./auth-config";
@@ -134,7 +135,7 @@ export const jwt = {
     // Create a signer function with predefined options
     const sign = createSigner({ key, ...options, algorithm });
 
-    const token = await sign({ ...payload, tokenType: ACCESS_TOKEN_TYPE });
+    const token = await sign({ jti: randomUUID(), ...payload, tokenType: ACCESS_TOKEN_TYPE });
     return token;
   },
 
@@ -179,7 +180,7 @@ export const jwt = {
     }: SignerOptions & { key?: string } = {},
   ): Promise<string> {
     const sign = createSigner({ key, expiresIn, algorithm, ...options });
-    return sign({ ...payload, tokenType: REFRESH_TOKEN_TYPE });
+    return sign({ jti: randomUUID(), ...payload, tokenType: REFRESH_TOKEN_TYPE });
   },
 
   /**

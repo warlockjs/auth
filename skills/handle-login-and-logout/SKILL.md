@@ -177,3 +177,7 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 - [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token lifecycle, rotation, family revocation
 - [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — sign-up that issues tokens after creation
 - [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — where the access token gets consumed
+
+## Browser sessions for Web pages
+
+For cookie sessions read by `@warlock.js/web` pages, log in with `authService.loginWithSessionCookies(request, response, Model, credentials)`. It requires a same-origin `Origin`/`Referer` even without cookies (login CSRF) and sets the access and refresh cookies (`auth.cookie.name`, `auth.cookie.refreshName`, `Path=/`). Log out with `authService.logout(user, access, refresh)` then `authService.clearSessionCookies(response)`. Resolve pages with `pageSession({ project })` (`web.session`); header beats cookie; `auth.session.maxAge` defaults to `"30d"`. Multi-instance: share the JWT secret and the cache store, keep clocks in sync.

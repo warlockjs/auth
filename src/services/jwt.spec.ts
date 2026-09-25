@@ -285,3 +285,58 @@ describe("jwt", () => {
     });
   });
 });
+
+describe("jwt token id (jti)", () => {
+  beforeEach(() => {
+    configKey.mockReset();
+    stubConfig();
+  });
+
+  // Two issuances with identical claims inside the same second used to sign to
+  // byte-identical tokens, colliding on the unique token index during
+  // family-preserving refresh rotation.
+  it("issues distinct access tokens for identical payloads in the same second", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T00:00:00.000Z"));
+
+    try {
+      const first = await jwt.generate({ id: 1 }, { expiresIn: ONE_HOUR });
+      const second = await jwt.generate({ id: 1 }, { expiresIn: ONE_HOUR });
+
+      expect(first).not.toBe(second);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("issues distinct refresh tokens for identical payloads in the same second", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T00:00:00.000Z"));
+
+    try {
+      const first = await jwt.generateRefreshToken({ userId: 1, familyId: "f" }, { expiresIn: ONE_HOUR });
+      const second = await jwt.generateRefreshToken({ userId: 1, familyId: "f" }, { expiresIn: ONE_HOUR });
+
+      expect(first).not.toBe(second);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a caller-supplied jti", async () => {
+    const token = await jwt.generate({ id: 1, jti: "fixed-id" }, { expiresIn: ONE_HOUR });
+    const decoded = await jwt.verify<{ jti: string }>(token);
+
+    expect(decoded.jti).toBe("fixed-id");
+  });
+
+  it("still verifies a legacy token minted without a jti", async () => {
+    const sign = createSigner({ key: ACCESS_SECRET, algorithm: "HS256", expiresIn: ONE_HOUR });
+    const legacyToken = await sign({ id: 9 });
+
+    const decoded = await jwt.verify<{ id: number; jti?: string }>(legacyToken);
+
+    expect(decoded.id).toBe(9);
+    expect(decoded.jti).toBeUndefined();
+  });
+});

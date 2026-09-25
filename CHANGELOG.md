@@ -4,6 +4,20 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.21.0
+
+### Added
+
+- Page sessions: `pageSession` / `sessionMiddleware` give pages a renewing session (renewal on by default). `session.maxAge` bounds the token family from its creation (default `"30d"`); a family past it is revoked and renewal returns `null`.
+- `setSessionCookies` / `clearSessionCookies` write HttpOnly, SameSite=Lax, `Path=/` cookies, ignoring `auth.cookie.path`. `authService.loginWithSessionCookies()` logs in and sets them.
+- `resolveRequestUser` memoizes on `request.locals.session`: repeat or concurrent callers in one request share a single verify, DB lookup and renewal (the first caller's options win).
+
+### Changed
+
+- **BREAKING:** `loginWithSessionCookies()` requires a same-origin `Origin`/`Referer` even with no cookies, otherwise it throws `CsrfOriginMismatchError`. Send the header from non-browser clients.
+- **BREAKING:** `authMiddleware` takes an ordered header/cookie `sources` list; a present Authorization header always wins and never falls back to the cookie, so an invalid header now returns `401`.
+- JWTs carry a random `jti`, so tokens issued in the same second differ.
+
 ## 5.20.1 - 2026-09-24
 
 ### Changed
