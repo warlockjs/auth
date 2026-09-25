@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import type { Response } from "@warlock.js/core";
+import type { CookieWriter } from "../contracts/types";
 
 vi.mock("../models/access-token", () => ({ AccessToken: {} }));
 vi.mock("../models/refresh-token", () => ({ RefreshToken: {} }));
@@ -57,7 +59,7 @@ describe("authService.setSessionCookies", () => {
   it("sets both cookies HttpOnly, Lax, Path=/ with each token's own lifetime", () => {
     const response = buildResponse();
 
-    authService.setSessionCookies(response as never, tokens);
+    authService.setSessionCookies(response, tokens);
 
     expect(response.cookie).toHaveBeenCalledTimes(2);
     expect(response.cookie).toHaveBeenCalledWith("access_token", "the-access", {
@@ -84,7 +86,7 @@ describe("authService.setSessionCookies", () => {
     });
     const response = buildResponse();
 
-    authService.setSessionCookies(response as never, tokens);
+    authService.setSessionCookies(response, tokens);
 
     expect(response.cookie).toHaveBeenCalledWith(
       "sid",
@@ -103,7 +105,7 @@ describe("authService.clearSessionCookies", () => {
   it("clears both default-named cookies on Path=/", () => {
     const response = buildResponse();
 
-    authService.clearSessionCookies(response as never);
+    authService.clearSessionCookies(response);
 
     expect(response.clearCookie).toHaveBeenCalledWith("access_token", { path: "/" });
     expect(response.clearCookie).toHaveBeenCalledWith("refresh_token", { path: "/" });
@@ -113,9 +115,16 @@ describe("authService.clearSessionCookies", () => {
     stubCookieConfig({ "auth.cookie.name": "sid", "auth.cookie.refreshName": "rid" });
     const response = buildResponse();
 
-    authService.clearSessionCookies(response as never);
+    authService.clearSessionCookies(response);
 
     expect(response.clearCookie).toHaveBeenCalledWith("sid", { path: "/" });
     expect(response.clearCookie).toHaveBeenCalledWith("rid", { path: "/" });
+  });
+});
+
+describe("CookieWriter", () => {
+  it("accepts core's Response and any object with cookie/clearCookie", () => {
+    expectTypeOf<Response>().toMatchTypeOf<CookieWriter>();
+    expectTypeOf(buildResponse()).toMatchTypeOf<CookieWriter>();
   });
 });

@@ -462,6 +462,16 @@ export type SetAuthCookieOptions = {
   maxAge?: number;
 };
 
+/**
+ * The cookie surface the auth cookie helpers write through. Core's `Response`
+ * satisfies it, and so does a page action's buffered `ActionResponse` from
+ * `@warlock.js/web`, so the same helpers work in controllers and page actions.
+ */
+export type CookieWriter = {
+  cookie(name: string, value: string, options?: Record<string, unknown>): unknown;
+  clearCookie(name: string, options?: Record<string, unknown>): unknown;
+};
+
 /** Per-call overrides for {@link AuthService.clearAuthCookie}. */
 export type ClearAuthCookieOptions = {
   /** Cookie name; defaults to `auth.cookie.name` (package default `"access_token"`). */

@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## Unreleased
+
+### Fixed
+
+- `setSessionCookies`, `clearSessionCookies`, `setAuthCookie`, `clearAuthCookie` and `loginWithSessionCookies` take a `CookieWriter` (any object with `cookie()` and `clearCookie()`), so a page action's `response` works without a cast.
+
 ## 5.21.0 - 2026-09-25
 
 ### Added
