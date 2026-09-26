@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { Response } from "@warlock.js/core";
-import type { CookieWriter } from "../contracts/types";
 
 vi.mock("../models/access-token", () => ({ AccessToken: {} }));
 vi.mock("../models/refresh-token", () => ({ RefreshToken: {} }));
@@ -122,9 +121,16 @@ describe("authService.clearSessionCookies", () => {
   });
 });
 
-describe("CookieWriter", () => {
-  it("accepts core's Response and any object with cookie/clearCookie", () => {
-    expectTypeOf<Response>().toMatchTypeOf<CookieWriter>();
-    expectTypeOf(buildResponse()).toMatchTypeOf<CookieWriter>();
+describe("cookie helper response param", () => {
+  it("accepts core's Response and web's structural ActionResponse", () => {
+    type HelperResponse = Parameters<typeof authService.setSessionCookies>[0];
+    // A structural copy of web's `ActionResponse`; auth does not depend on web.
+    type ActionResponse = {
+      cookie(name: string, value: Parameters<Response["cookie"]>[1], options?: Parameters<Response["cookie"]>[2]): ActionResponse;
+      clearCookie(name: string, options?: Parameters<Response["clearCookie"]>[1]): ActionResponse;
+    };
+
+    expectTypeOf<Response>().toMatchTypeOf<HelperResponse>();
+    expectTypeOf<ActionResponse>().toMatchTypeOf<HelperResponse>();
   });
 });

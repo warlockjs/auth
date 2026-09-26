@@ -6,13 +6,13 @@ import {
   ForbiddenError,
   hashPassword,
   type Request,
+  type Response,
   verifyPassword,
 } from "@warlock.js/core";
 import type {
   AccessTokenOutput,
   AuthCredentials,
   ClearAuthCookieOptions,
-  CookieWriter,
   DeviceInfo,
   LoginResult,
   SetAuthCookieOptions,
@@ -653,7 +653,7 @@ class AuthService {
    */
   public async loginWithSessionCookies<T extends Auth>(
     request: Request,
-    response: CookieWriter,
+    response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
     Model: ChildModel<T>,
     credentials: AuthCredentials,
     deviceInfo?: DeviceInfo,
@@ -964,7 +964,7 @@ class AuthService {
    * authService.setAuthCookie(response, tokens.accessToken);
    */
   public setAuthCookie(
-    response: CookieWriter,
+    response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
     token: string | AccessTokenOutput,
     options: SetAuthCookieOptions = {},
   ): void {
@@ -990,7 +990,7 @@ class AuthService {
    * await authService.logout(user, accessToken, refreshToken);
    * authService.clearAuthCookie(response);
    */
-  public clearAuthCookie(response: CookieWriter, options: ClearAuthCookieOptions = {}): void {
+  public clearAuthCookie(response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown }, options: ClearAuthCookieOptions = {}): void {
     const name = options.name ?? authConfig.cookie.name();
     const path = options.path ?? authConfig.cookie.path();
 
@@ -1009,7 +1009,7 @@ class AuthService {
    * authService.setSessionCookies(response, tokens);
    */
   public setSessionCookies(
-    response: CookieWriter,
+    response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
     tokens: { accessToken: AccessTokenOutput; refreshToken: AccessTokenOutput },
   ): void {
     const cookies = [
@@ -1034,7 +1034,7 @@ class AuthService {
    * Clear both session cookies {@link setSessionCookies} wrote, on `Path=/`.
    * Pair it with {@link logout} after the token rows are revoked.
    */
-  public clearSessionCookies(response: CookieWriter): void {
+  public clearSessionCookies(response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown }): void {
     response.clearCookie(authConfig.cookie.name(), { path: "/" });
     response.clearCookie(authConfig.cookie.refreshName(), { path: "/" });
   }
