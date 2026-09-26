@@ -4,17 +4,15 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
-## Unreleased
+## 5.23.0 - 2026-09-25
+
+### Upgrading
+
+- Replace any `CookieWriter` type import: auth's cookie helpers now take core's `Response`, and your own helpers can take `{ cookie: (...args: Parameters<Response["cookie"]>) => unknown }`.
 
 ### Removed
 
-- `CookieWriter` is removed. `setSessionCookies`, `clearSessionCookies`, `setAuthCookie`, `clearAuthCookie` and `loginWithSessionCookies` take core's `Response` (only its `cookie` and `clearCookie`), so a page action's `response` still works without a cast.
-
-## 5.23.0 - 2026-09-25
-
-### Changed
-
-- Lockstep patch release; package APIs are unchanged.
+- **BREAKING:** `CookieWriter` is removed. `setSessionCookies`, `clearSessionCookies`, `setAuthCookie`, `clearAuthCookie` and `loginWithSessionCookies` take core's `Response` (only its `cookie` and `clearCookie`), so a page action's `response` still works without a cast. An app helper that was typed as `CookieWriter` can take `{ cookie: (...args: Parameters<Response["cookie"]>) => unknown }` instead.
 
 ## 5.22.1 - 2026-09-25
 
