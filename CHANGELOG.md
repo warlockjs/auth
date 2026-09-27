@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.25.0
+
+### Fixed
+
+- `authMiddleware` now returns its normal `401` missing-credential response for an unsafe dual-source request that presents neither access nor refresh cookies, instead of treating the configured refresh descriptor as a presented credential and rejecting its Origin with `403`.
+
 ## 5.24.0 - 2026-09-27
 
 ### Changed

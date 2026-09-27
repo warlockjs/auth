@@ -183,7 +183,8 @@ export function authMiddleware(
     // Renewal can mint cookies, so a cookie-authenticated unsafe request must
     // pass the same CSRF check even when its access cookie is missing.
     if (
-      (readCredential(request, usedTokenFrom) || usedRefresh) &&
+      (readCredential(request, usedTokenFrom) ||
+        (usedRefresh && readCredential(request, usedRefresh))) &&
       requiresCsrfOriginCheck(usedTokenFrom, request.method)
     ) {
       try {

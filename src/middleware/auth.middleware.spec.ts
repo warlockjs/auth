@@ -1237,6 +1237,56 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
     expect(response.forbidden).not.toHaveBeenCalled();
     expect(request.locals.user).toEqual({ id: 1, userType: "user" });
   });
+
+  it("uses CSRF only when a dual-source request actually presents a cookie credential", async () => {
+    const middleware = authMiddleware("user", {
+      sources: [{ source: "header" }, { source: "cookie", key: "access" }],
+      refresh: { source: "cookie", key: "refresh" },
+    });
+    const response = buildCsrfResponse();
+    const buildDualRequest = (credentials: {
+      authorizationValue?: string;
+      access?: string;
+      refresh?: string;
+    }) => ({
+      ...buildCsrfRequest({
+        method: "POST",
+        source: "cookie",
+        origin: "https://evil.example.com",
+      }),
+      authorizationValue: credentials.authorizationValue,
+      cookie: vi.fn((name: string) => {
+        if (name === "access") return credentials.access;
+        if (name === "refresh") return credentials.refresh;
+
+        return undefined;
+      }),
+    });
+
+    await middleware(makeCtx({ request: buildDualRequest({}), response }));
+
+    expect(response.unauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.MissingAccessToken }),
+    );
+    expect(response.forbidden).not.toHaveBeenCalled();
+
+    await middleware(makeCtx({ request: buildDualRequest({ refresh: "refresh-token" }), response }));
+
+    expect(response.forbidden).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
+    );
+
+    await middleware(makeCtx({ request: buildDualRequest({ access: "access-token" }), response }));
+
+    expect(response.forbidden).toHaveBeenCalledTimes(2);
+
+    stubSuccessfulAuth();
+    await middleware(
+      makeCtx({ request: buildDualRequest({ authorizationValue: "header-token" }), response }),
+    );
+
+    expect(response.forbidden).toHaveBeenCalledTimes(2);
+  });
 });
 
 /**
