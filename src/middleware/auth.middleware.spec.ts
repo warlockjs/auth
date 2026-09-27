@@ -1270,7 +1270,9 @@ describe("authMiddleware — CSRF Origin check (cookie source, unsafe method)", 
     );
     expect(response.forbidden).not.toHaveBeenCalled();
 
-    await middleware(makeCtx({ request: buildDualRequest({ refresh: "refresh-token" }), response }));
+    await middleware(
+      makeCtx({ request: buildDualRequest({ refresh: "refresh-token" }), response }),
+    );
 
     expect(response.forbidden).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: AuthErrorCodes.CsrfOriginMismatch }),
