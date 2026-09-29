@@ -25,7 +25,9 @@ describe("AuthTokenFamily", () => {
     Object.defineProperty(family, "get", {
       value: (key: string) => ({ user_id: 1, user_type: "user" })[key],
     });
-    vi.spyOn(AuthTokenFamily, "findByFamilyId").mockResolvedValue(family);
+    vi.spyOn(AuthTokenFamily, "findByFamilyId")
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(family);
 
     await expect(
       AuthTokenFamily.ensure({ id: 1, userType: "user" } as never, "legacy-family"),
@@ -36,6 +38,24 @@ describe("AuthTokenFamily", () => {
       { $setOnInsert: { user_id: 1, user_type: "user", revision: 0 } },
       { upsert: true },
     );
+  });
+
+  it("returns the existing family when ensured twice without another upsert", async () => {
+    const atomic = vi.spyOn(AuthTokenFamily, "atomic").mockResolvedValue(1);
+    const family = Object.create(AuthTokenFamily.prototype) as AuthTokenFamily;
+    Object.defineProperty(family, "get", {
+      value: (key: string) => ({ user_id: 1, user_type: "user" })[key],
+    });
+    vi.spyOn(AuthTokenFamily, "findByFamilyId")
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(family);
+
+    await expect(AuthTokenFamily.ensure({ id: 1, userType: "user" } as never, "family"))
+      .resolves.toBe(family);
+    await expect(AuthTokenFamily.ensure({ id: 1, userType: "user" } as never, "family"))
+      .resolves.toBe(family);
+
+    expect(atomic).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a family identifier already owned by a different user", async () => {

@@ -566,6 +566,12 @@ describe("authService.createTokenPair", () => {
     expect(runTokenFamilyOperation).not.toHaveBeenCalled();
   });
 
+  it("ensures its token family exactly once", async () => {
+    await authService.createTokenPair(buildUser());
+
+    expect(authTokenFamilyEnsure).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the durable family boundary before issuing into a supplied family", async () => {
     const user = buildUser();
 

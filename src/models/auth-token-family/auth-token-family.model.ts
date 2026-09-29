@@ -38,6 +38,19 @@ export class AuthTokenFamily extends Model {
 
   /** Add a durable row for an existing lineage through a driver-native upsert. */
   public static async ensure(user: Auth, familyId: string): Promise<AuthTokenFamily> {
+    const existing = await this.findByFamilyId(familyId);
+
+    if (existing) {
+      if (
+        existing.get("user_id") !== user.id ||
+        existing.get<string>("user_type") !== user.userType
+      ) {
+        throw new Error("Token family belongs to a different user");
+      }
+
+      return existing;
+    }
+
     await this.atomic(
       { family_id: familyId },
       { $setOnInsert: { user_id: user.id, user_type: user.userType, revision: 0 } },

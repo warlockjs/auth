@@ -118,6 +118,7 @@ class AuthService {
   private async issueRefreshToken(
     user: Auth,
     deviceInfo?: DeviceInfo,
+    ensuredFamily?: AuthTokenFamily,
   ): Promise<RefreshToken | undefined> {
     if (!authConfig.refreshToken.enabled()) return;
 
@@ -128,7 +129,7 @@ class AuthService {
 
     const familyId = deviceInfo?.familyId || Random.string(32);
 
-    const family = await AuthTokenFamily.ensure(user, familyId);
+    const family = ensuredFamily ?? (await AuthTokenFamily.ensure(user, familyId));
 
     if (family.isRevoked) {
       throw new Error("Cannot issue tokens for a revoked token family");
@@ -159,7 +160,7 @@ class AuthService {
   private async issueInSuppliedFamily<T>(
     user: Auth,
     familyId: string,
-    issue: () => Promise<T>,
+    issue: (family: AuthTokenFamily) => Promise<T>,
   ): Promise<T> {
     // Preserve the established error for a family that was already revoked
     // before issuance started. The coordinator covers a revoke that races
@@ -171,7 +172,7 @@ class AuthService {
     }
 
     try {
-      return await runTokenFamilyOperation(familyId, async () => issue());
+      return await runTokenFamilyOperation(familyId, issue);
     } catch (error) {
       // Do not expose a timing-dependent error shape to callers: a family
       // revoked between ensure() and the transaction is the same unusable
@@ -197,21 +198,27 @@ class AuthService {
     await this.assertCanAuthenticate(user);
 
     if (deviceInfo?.familyId) {
-      return this.issueInSuppliedFamily(user, deviceInfo.familyId, () =>
-        this.issueRefreshToken(user, deviceInfo),
+      return this.issueInSuppliedFamily(user, deviceInfo.familyId, (family) =>
+        this.issueRefreshToken(user, deviceInfo, family),
       );
     }
 
     return this.issueRefreshToken(user, deviceInfo);
   }
 
-  private async issueTokenPair(user: Auth, deviceInfo?: DeviceInfo): Promise<TokenPair> {
+  private async issueTokenPair(
+    user: Auth,
+    deviceInfo?: DeviceInfo,
+    ensuredFamily?: AuthTokenFamily,
+  ): Promise<TokenPair> {
     const refreshEnabled = authConfig.refreshToken.enabled();
     const familyId = deviceInfo?.familyId || Random.string(32);
 
-    if (refreshEnabled) {
-      const family = await AuthTokenFamily.ensure(user, familyId);
+    const family = refreshEnabled
+      ? (ensuredFamily ?? (await AuthTokenFamily.ensure(user, familyId)))
+      : undefined;
 
+    if (family) {
       if (family.isRevoked) {
         throw new Error("Cannot issue tokens for a revoked token family");
       }
@@ -225,6 +232,7 @@ class AuthService {
     const refreshToken = await this.issueRefreshToken(
       user,
       refreshEnabled ? { ...deviceInfo, familyId } : deviceInfo,
+      family,
     );
 
     const tokenPair: TokenPair = {
@@ -255,8 +263,8 @@ class AuthService {
     await this.assertCanAuthenticate(user);
 
     if (authConfig.refreshToken.enabled() && deviceInfo?.familyId) {
-      return this.issueInSuppliedFamily(user, deviceInfo.familyId, () =>
-        this.issueTokenPair(user, deviceInfo),
+      return this.issueInSuppliedFamily(user, deviceInfo.familyId, (family) =>
+        this.issueTokenPair(user, deviceInfo, family),
       );
     }
 
