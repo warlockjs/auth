@@ -3,7 +3,7 @@
  * `request.locals.user`.
  *
  * Moved here from `@warlock.js/core` in 5.12.0 (core's `Request` no longer
- * has a `user` property at all — see `RequestUserMovedError`). Empty by
+ * has a `user` property at all). Empty by
  * default, exactly as it was in core, so any shape is assignable at the
  * declaration site; an app narrows it via module augmentation:
  *
