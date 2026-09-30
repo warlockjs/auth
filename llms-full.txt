@@ -497,13 +497,17 @@ import { type RequestHandler } from "@warlock.js/core";
 import { User } from "app/users/models/user/user.model";
 
 export const loginController: RequestHandler = async ({ request, response }) => {
-  const result = await authService.login(User, {
-    email: request.input("email"),
-    password: request.input("password"),
-  }, {
-    userAgent: request.header("user-agent"),
-    ip: request.ip,
-  });
+  const result = await authService.login(
+    User,
+    {
+      email: request.input("email"),
+      password: request.input("password"),
+    },
+    {
+      userAgent: request.header("user-agent"),
+      ip: request.ip,
+    },
+  );
 
   if (!result) {
     return response.unauthorized({ error: "Invalid credentials" });
@@ -555,8 +559,8 @@ The optional `deviceInfo` carries metadata into the refresh token row:
 authService.login(User, credentials, {
   userAgent: request.header("user-agent"),
   ip: request.ip,
-  deviceId: "...",          // your client-side device fingerprint
-  familyId: "...",          // pre-existing family for token rotation, usually omitted
+  deviceId: "...", // your client-side device fingerprint
+  familyId: "...", // pre-existing family for token rotation, usually omitted
 });
 ```
 
@@ -570,8 +574,8 @@ import { type RequestHandler } from "@warlock.js/core";
 export const logoutController: RequestHandler = async ({ request, response }) => {
   await authService.logout(
     request.locals.user!,
-    request.authorizationValue,        // access token from the Authorization header
-    request.input("refreshToken"),     // refresh token from the request body
+    request.authorizationValue, // access token from the Authorization header
+    request.input("refreshToken"), // refresh token from the request body
   );
 
   return response.success({ message: "Logged out" });
@@ -579,6 +583,7 @@ export const logoutController: RequestHandler = async ({ request, response }) =>
 ```
 
 The contract:
+
 - **Pass the access token** → that specific access-token row is deleted.
 - **Pass the refresh token** → that specific refresh-token row is revoked.
 - **Omit refresh token** → behavior depends on `config.auth.refreshToken.logoutWithoutToken`:
@@ -602,10 +607,10 @@ Useful for "logout from all devices" buttons. Fires `token.revoked` per token + 
 import { type RequestHandler } from "@warlock.js/core";
 
 export const refreshController: RequestHandler = async ({ request, response }) => {
-  const tokens = await authService.refreshTokens(
-    request.input("refreshToken"),
-    { userAgent: request.header("user-agent"), ip: request.ip },
-  );
+  const tokens = await authService.refreshTokens(request.input("refreshToken"), {
+    userAgent: request.header("user-agent"),
+    ip: request.ip,
+  });
 
   if (!tokens) {
     return response.unauthorized({ error: "Invalid refresh token" });
@@ -624,11 +629,21 @@ Returns a new token pair or `null` (token expired, revoked, or replay-detected).
 ```ts
 import { authEvents } from "@warlock.js/auth";
 
-authEvents.on("login.success", (user, tokens, deviceInfo) => { /* audit */ });
-authEvents.on("login.failed",  (credentials, reason) => { /* alert on brute force */ });
-authEvents.on("logout",        (user) => { /* clear server-side session, if any */ });
-authEvents.on("token.refreshed", (user, newPair, oldToken) => { /* track rotation */ });
-authEvents.on("cleanup.completed", (count) => { /* metrics */ });
+authEvents.on("login.success", (user, tokens, deviceInfo) => {
+  /* audit */
+});
+authEvents.on("login.failed", (credentials, reason) => {
+  /* alert on brute force */
+});
+authEvents.on("logout", (user) => {
+  /* clear server-side session, if any */
+});
+authEvents.on("token.refreshed", (user, newPair, oldToken) => {
+  /* track rotation */
+});
+authEvents.on("cleanup.completed", (count) => {
+  /* metrics */
+});
 ```
 
 Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `logout.all`, `logout.failsafe`, `token.created`, `token.refreshed`, `token.revoked`, `token.expired`, `token.familyRevoked`, `session.created`, `session.destroyed`, `cleanup.completed`.
@@ -645,6 +660,10 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 - [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token lifecycle, rotation, family revocation
 - [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — sign-up that issues tokens after creation
 - [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — where the access token gets consumed
+
+## Browser sessions for Web pages
+
+For cookie sessions read by `@warlock.js/web` pages, log in with `authService.loginWithSessionCookies(request, response, Model, credentials)`. It requires a same-origin `Origin`/`Referer` even without cookies (login CSRF) and sets the access and refresh cookies (`auth.cookie.name`, `auth.cookie.refreshName`, `Path=/`). To share a session across subdomains, configure `auth.cookie.cookieDomain(request)` to return (for example) `".example.com"`; return `undefined` for host-only cookies. With `cookieDomain` configured, always pass the request to cookie helpers so they select the same Domain: `authService.setSessionCookies(response, tokens, request)`, `authService.clearSessionCookies(response, request)`, and `authService.clearAuthCookie(response, options, request)`. Omitting it throws `CookieDomainRequestRequiredError`. Domain clears also remove the legacy host-only names. Resolve pages with `pageSession({ project })` (`web.session`); header beats cookie; `auth.session.maxAge` defaults to `"30d"`. A page session with multiple `userTypes` cannot renew its cookie: the resolver only supplies a renewal user type when exactly one type is allowed, so it reads the session but skips automatic renewal. Multi-instance: share the JWT secret and the cache store, keep clocks in sync.
 
 
 ## login-with-providers  `@warlock.js/auth/login-with-providers/SKILL.md`
