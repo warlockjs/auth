@@ -1,4 +1,5 @@
 import { type ChildModel } from "@warlock.js/cascade";
+import type { Request } from "@warlock.js/core";
 import { type Algorithm } from "fast-jwt";
 import type { AccessToken } from "../models/access-token";
 import type { Auth } from "../models/auth.model";
@@ -402,6 +403,9 @@ export type LoginResult<UserType extends Auth> = {
   tokens: TokenPair;
 };
 
+/** Selects a cookie Domain for one request; return `undefined` for a host-only cookie. */
+export type CookieDomainResolver = (request: Request) => string | undefined;
+
 /**
  * Configuration for the cookie an app opts into via `authService.setAuthCookie`
  * / `clearAuthCookie` and reads back with `authMiddleware([], "cookie:<name>")`.
@@ -427,6 +431,8 @@ export type CookieAuthConfig = {
    * @default "/"
    */
   path?: string;
+  /** Select a request-scoped Domain; `undefined` keeps the cookie host-only. */
+  cookieDomain?: CookieDomainResolver;
 };
 
 /**
@@ -453,6 +459,8 @@ export type SetAuthCookieOptions = {
   name?: string;
   /** Cookie `Path`; defaults to `auth.cookie.path` (package default `"/"`). */
   path?: string;
+  /** Cookie `Domain` attribute. Omit for a host-only cookie. */
+  domain?: string;
   /**
    * `Max-Age`, in seconds. Overrides the expiry `setAuthCookie` would
    * otherwise derive from an `AccessTokenOutput`'s `expiresAt`. Passing a

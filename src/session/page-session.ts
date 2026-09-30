@@ -1,4 +1,5 @@
 import { config, t, type Middleware, type Request, type Response } from "@warlock.js/core";
+import type { CookieDomainResolver } from "../contracts/types";
 import { log } from "@warlock.js/logger";
 import ms from "ms";
 import {
@@ -40,6 +41,8 @@ export type SessionResolverOptions = {
   maxAge?: string | number;
   /** Refresh overlap window forwarded to renewal. */
   overlapMs?: number;
+  /** Select a request-scoped Domain for renewed cookies; `undefined` keeps them host-only. */
+  cookieDomain?: CookieDomainResolver;
 };
 
 export type PageSessionOptions<TModel, TUser> = SessionResolverOptions & {
@@ -109,6 +112,7 @@ function createModelResolver(options: SessionResolverOptions) {
       maxAgeMs: resolveMaxAgeMs(options.maxAge),
       allowedTypes,
       renewalUserType,
+      cookieDomain: options.cookieDomain ?? authConfig.cookie.cookieDomain(),
     });
 
     if (!model) return null;

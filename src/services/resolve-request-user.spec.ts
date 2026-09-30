@@ -100,11 +100,9 @@ describe("resolveRequestUser", () => {
     jwtVerify.mockResolvedValue({ id: 1, userType: "user" });
     accessTokenFindByToken.mockResolvedValue(liveRow());
 
-    const outcome = await resolveRequestUserOutcome(
-      buildRequest("token") as never,
-      {} as never,
-      { allowedTypes: ["admin"] },
-    );
+    const outcome = await resolveRequestUserOutcome(buildRequest("token") as never, {} as never, {
+      allowedTypes: ["admin"],
+    });
 
     expect(outcome).toEqual({ user: null, failure: "forbidden" });
   });
@@ -137,6 +135,7 @@ describe("resolveRequestUser", () => {
       overlapMs: 4_000,
       allowedTypes: ["user"],
       renewalUserType: "user",
+      cookieDomain: () => ".example.com",
     });
 
     expect(resolved).toBe(user);
@@ -145,13 +144,13 @@ describe("resolveRequestUser", () => {
       1,
       response,
       expect.objectContaining({ token: "next-access" }),
-      { name: "access" },
+      { name: "access", domain: ".example.com" },
     );
     expect(setAuthCookie).toHaveBeenNthCalledWith(
       2,
       response,
       expect.objectContaining({ token: "next-refresh" }),
-      { name: "refresh" },
+      { name: "refresh", domain: ".example.com" },
     );
     expect(accessTokenFindByToken).toHaveBeenCalledWith("next-access");
   });

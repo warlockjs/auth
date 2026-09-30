@@ -1,4 +1,5 @@
 import { config } from "@warlock.js/core";
+import type { CookieDomainResolver } from "../contracts/types";
 import { log } from "@warlock.js/logger";
 import { type Algorithm } from "fast-jwt";
 import ms from "ms";
@@ -189,6 +190,8 @@ export const authConfig = {
     refreshName: (): string => config.key("auth.cookie.refreshName", "refresh_token"),
     /** Cookie `Path` attribute `setAuthCookie`/`clearAuthCookie` use. @default "/" */
     path: (): string => config.key("auth.cookie.path", "/"),
+    /** Select the request-scoped cookie Domain; undefined keeps it host-only. */
+    cookieDomain: (): CookieDomainResolver | undefined => config.key("auth.cookie.cookieDomain"),
   },
   csrf: {
     /**

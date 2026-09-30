@@ -1,6 +1,6 @@
 import { config, type Request, type Response } from "@warlock.js/core";
 import { log } from "@warlock.js/logger";
-import type { TokenFrom } from "../contracts/types";
+import type { CookieDomainResolver, TokenFrom } from "../contracts/types";
 import { AccessToken } from "../models/access-token";
 import { authService } from "./auth.service";
 import { isInvalidCredentialError, jwt } from "./jwt";
@@ -27,6 +27,8 @@ export type ResolveRequestUserOptions = {
   maxAgeMs?: number;
   /** The single user type a renewal mints for. Required for renewal. */
   renewalUserType?: string;
+  /** Select a request-scoped Domain for renewed cookies. */
+  cookieDomain?: CookieDomainResolver;
 };
 
 /**
@@ -36,8 +38,7 @@ export type ResolveRequestUserOptions = {
 export type RequestUserFailure = "missing" | "invalid" | "forbidden" | "unauthorized";
 
 export type RequestUserOutcome<TUser = any> =
-  | { user: TUser; failure?: undefined }
-  | { user: null; failure: RequestUserFailure };
+  { user: TUser; failure?: undefined } | { user: null; failure: RequestUserFailure };
 
 /**
  * Whether the persisted row says the token is dead.
@@ -104,9 +105,11 @@ export async function resolveRequestUserOutcome(
 
     authService.setAuthCookie(response, pair.accessToken, {
       name: tokenFrom.slice("cookie:".length),
+      domain: options.cookieDomain?.(request),
     });
     authService.setAuthCookie(response, pair.refreshToken, {
       name: refreshCredential.slice("cookie:".length),
+      domain: options.cookieDomain?.(request),
     });
     authorizationValue = pair.accessToken.token;
 
@@ -205,7 +208,7 @@ export function resolveRequestUser(
   // caller's options win for the rest of the request.
   if (!request.locals.session) {
     request.locals.session = resolveRequestUserOutcome(request, response, options).then(
-      outcome => outcome.user,
+      (outcome) => outcome.user,
     );
   }
 

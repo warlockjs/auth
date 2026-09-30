@@ -33,6 +33,16 @@ import {
   TokenFamilyUnavailableError,
 } from "./token-family-operation";
 
+/** Thrown when a request-scoped cookie Domain cannot be resolved safely. */
+export class CookieDomainRequestRequiredError extends Error {
+  public constructor(method: string) {
+    super(
+      `${method} requires the request when auth.cookie.cookieDomain is configured because the cookie Domain must be resolved for that request.`,
+    );
+    this.name = "CookieDomainRequestRequiredError";
+  }
+}
+
 class AuthService {
   /**
    * Resolve the active access-token model — the package default, or a subclass
@@ -673,12 +683,18 @@ class AuthService {
     if (!result) return null;
 
     if (result.tokens.refreshToken) {
-      this.setSessionCookies(response, {
-        accessToken: result.tokens.accessToken,
-        refreshToken: result.tokens.refreshToken,
-      });
+      this.setSessionCookies(
+        response,
+        {
+          accessToken: result.tokens.accessToken,
+          refreshToken: result.tokens.refreshToken,
+        },
+        request,
+      );
     } else {
-      this.setAuthCookie(response, result.tokens.accessToken);
+      this.setAuthCookie(response, result.tokens.accessToken, {
+        domain: this.cookieDomainFor("loginWithSessionCookies", request),
+      });
     }
 
     return result;
@@ -950,6 +966,20 @@ class AuthService {
     return Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
   }
 
+  private cookieDomainFor(method: string, request?: Request): string | undefined {
+    const resolver = authConfig.cookie.cookieDomain();
+
+    if (!resolver) {
+      return undefined;
+    }
+
+    if (!request) {
+      throw new CookieDomainRequestRequiredError(method);
+    }
+
+    return resolver(request);
+  }
+
   /**
    * Write the auth cookie on `response` — the write side of the `cookie:<name>`
    * token source `authMiddleware([], "cookie:<name>")` already reads. An explicit
@@ -984,6 +1014,7 @@ class AuthService {
     response.cookie(name, tokenValue, {
       raw: true,
       path,
+      ...(options.domain !== undefined ? { domain: options.domain } : {}),
       ...(maxAge !== undefined ? { maxAge } : {}),
     });
   }
@@ -998,9 +1029,18 @@ class AuthService {
    * await authService.logout(user, accessToken, refreshToken);
    * authService.clearAuthCookie(response);
    */
-  public clearAuthCookie(response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown }, options: ClearAuthCookieOptions = {}): void {
+  public clearAuthCookie(
+    response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
+    options: ClearAuthCookieOptions = {},
+    request?: Request,
+  ): void {
     const name = options.name ?? authConfig.cookie.name();
     const path = options.path ?? authConfig.cookie.path();
+    const domain = this.cookieDomainFor("clearAuthCookie", request);
+
+    if (domain !== undefined) {
+      response.clearCookie(name, { path, domain });
+    }
 
     response.clearCookie(name, { path });
   }
@@ -1019,7 +1059,9 @@ class AuthService {
   public setSessionCookies(
     response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
     tokens: { accessToken: AccessTokenOutput; refreshToken: AccessTokenOutput },
+    request?: Request,
   ): void {
+    const domain = this.cookieDomainFor("setSessionCookies", request);
     const cookies = [
       [authConfig.cookie.name(), tokens.accessToken],
       [authConfig.cookie.refreshName(), tokens.refreshToken],
@@ -1033,6 +1075,7 @@ class AuthService {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
+        ...(domain !== undefined ? { domain } : {}),
         ...(maxAge !== undefined ? { maxAge } : {}),
       });
     }
@@ -1042,9 +1085,19 @@ class AuthService {
    * Clear both session cookies {@link setSessionCookies} wrote, on `Path=/`.
    * Pair it with {@link logout} after the token rows are revoked.
    */
-  public clearSessionCookies(response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown }): void {
-    response.clearCookie(authConfig.cookie.name(), { path: "/" });
-    response.clearCookie(authConfig.cookie.refreshName(), { path: "/" });
+  public clearSessionCookies(
+    response: { [K in "cookie" | "clearCookie"]: (...args: Parameters<Response[K]>) => unknown },
+    request?: Request,
+  ): void {
+    const domain = this.cookieDomainFor("clearSessionCookies", request);
+
+    for (const name of [authConfig.cookie.name(), authConfig.cookie.refreshName()]) {
+      if (domain !== undefined) {
+        response.clearCookie(name, { path: "/", domain });
+      }
+
+      response.clearCookie(name, { path: "/" });
+    }
   }
 }
 

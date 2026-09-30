@@ -4,6 +4,16 @@ All notable changes to `@warlock.js/auth` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## Unreleased
+
+### Added
+
+- Cookie sessions now support `auth.cookie.cookieDomain(request)` and `pageSession`/`sessionMiddleware`'s `cookieDomain(request)` override. Returning a Domain scopes issued and renewed cookies to it; returning `undefined` preserves host-only cookies. Clearing a Domain-scoped session also clears the legacy host-only cookie names. When configured, pass `request` to `setSessionCookies(response, tokens, request)`, `clearSessionCookies(response, request)`, and `clearAuthCookie(response, options, request)`; omitting it throws `CookieDomainRequestRequiredError` rather than issuing or clearing a host-only cookie.
+
+### Notes
+
+- A page session configured with multiple `userTypes` cannot renew its cookie: the resolver only supplies a renewal user type when exactly one type is allowed, so it reads the session but skips automatic renewal.
+
 ## 5.25.0 - 2026-09-28
 
 ### Fixed
@@ -65,10 +75,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING:** `authMiddleware` takes an ordered header/cookie `sources` list; a present Authorization header always wins and never falls back to the cookie, so an invalid header now returns `401`.
 - JWTs carry a random `jti`, so tokens issued in the same second differ.
 
-
 ### Changed
 
 - Lockstep release maintenance and dependency refresh.
+
 ## 5.20.0 - 2026-09-24
 
 ### Changed
@@ -258,17 +268,17 @@ changelogs.
 
 - **A token with no `exp` claim is now rejected instead of being accepted forever.** `fast-jwt` has no deadline to check on such a token, so verification simply succeeds — measured against `fast-jwt@6.2.4`, a token with no `exp` verifies unchanged at `clockTimestamp` + 100 years. Both `jwt.verify` and `jwt.verifyRefreshToken` now require an `exp` claim.
 
-  This is deliberately on the *verify* side rather than the issue side: the tokens that lack an `exp` were minted by a version that no longer runs, so a guard on issue would not reach a single one of them. A caller may add to `requiredClaims`, never subtract — `jwt.verify(token, { requiredClaims: ["iat"] })` still requires `exp` too.
+  This is deliberately on the _verify_ side rather than the issue side: the tokens that lack an `exp` were minted by a version that no longer runs, so a guard on issue would not reach a single one of them. A caller may add to `requiredClaims`, never subtract — `jwt.verify(token, { requiredClaims: ["iat"] })` still requires `exp` too.
 
-- **The persisted `expires_at` is now enforced on every request.** `authMiddleware` previously checked only that the access-token row *existed*; a row whose own expiry had passed still opened the gate, because nothing ever asked. The row is now checked against the clock and deleted on rejection.
+- **The persisted `expires_at` is now enforced on every request.** `authMiddleware` previously checked only that the access-token row _existed_; a row whose own expiry had passed still opened the gate, because nothing ever asked. The row is now checked against the clock and deleted on rejection.
 
-  These are two independent defences. The first catches a token whose *claims* carry no deadline; the second catches a token whose *row* says the deadline has passed (a logged-out or expired session whose JWT is still within its own lifetime). Neither subsumes the other.
+  These are two independent defences. The first catches a token whose _claims_ carry no deadline; the second catches a token whose _row_ says the deadline has passed (a logged-out or expired session whose JWT is still within its own lifetime). Neither subsumes the other.
 
 ### Added
 
 - **`warlock auth.purge-never-expiring`** — remediation for rows written by the `expiresIn` defect below. Finds every access- and refresh-token row that can never retire itself, on two independent signals: an `expires_at` that is missing or unparseable, and a persisted token carrying no `exp` claim. Reports `id`, `user_id`, `user_type` and `expires_at` per row (never the token string — it is a live credential until the command removes it), then deletes them. Pass `--dry-run` to report without deleting.
 
-  `auth.cleanup` cannot find these rows and never could: its predicate is `expires_at < now`, and an `Invalid Date` compares `false` against *every* date, so such a row satisfies neither `< now` nor `> now`. It is outside the reach of every date predicate rather than merely wrong. The "no `exp` claim" signal is not in a column at all.
+  `auth.cleanup` cannot find these rows and never could: its predicate is `expires_at < now`, and an `Invalid Date` compares `false` against _every_ date, so such a row satisfies neither `< now` nor `> now`. It is outside the reach of every date predicate rather than merely wrong. The "no `exp` claim" signal is not in a column at all.
 
   Exposed programmatically as `authService.findNeverExpiringTokens()` (read-only) and `authService.purgeNeverExpiringTokens()`, and per model as `findNeverExpiring()` / `purgeNeverExpiring()`.
 
@@ -288,8 +298,8 @@ Affected users must log in again. To check **without deploying anything**, the r
 - **MongoDB** — `bson` serialises an `Invalid Date` to **epoch 0**, so the row reads `1970-01-01T00:00:00Z` rather than an invalid value:
 
   ```js
-  db.access_tokens.find({ expires_at: { $lte: new Date(0) } })
-  db.refresh_tokens.find({ expires_at: { $lte: new Date(0) } })
+  db.access_tokens.find({ expires_at: { $lte: new Date(0) } });
+  db.refresh_tokens.find({ expires_at: { $lte: new Date(0) } });
   ```
 
 - **PostgreSQL** — `pg` serialises an `Invalid Date` to the literal `0NaN-NaN-NaNTNaN:NaN:NaN.NaN+NaN:NaN`, which a `timestamp` column rejects, so the `INSERT` most likely failed and no row was written (the token was still signed and returned to the client — it is then rejected by the row check, since it has no row). Any rows that did land are visible as:
@@ -299,7 +309,7 @@ Affected users must log in again. To check **without deploying anything**, the r
   SELECT id, user_id, user_type, expires_at FROM refresh_tokens WHERE expires_at IS NULL OR expires_at <= 'epoch';
   ```
 
-These queries find the row-level shape only. The definitive test — *does the stored token carry an `exp` claim at all* — reads the JWT rather than a column, which is why the command exists and why it is the recommended path.
+These queries find the row-level shape only. The definitive test — _does the stored token carry an `exp` claim at all_ — reads the JWT rather than a column, which is why the command exists and why it is the recommended path.
 
 ### Fixed
 
@@ -315,7 +325,7 @@ These queries find the row-level shape only. The definitive test — *does the s
 
 - **`expiresIn: "0d"` (and any non-positive duration) is rejected too.** It is truthy and parses cleanly to `0`, so it survived any guard that only rejects `undefined` — and `fast-jwt` skips its own validation for `0`, emitting a token with **no `exp` claim** while the persisted row claims it expired immediately.
 
-- A bare number (`expiresIn: 2592000`) is now rejected instead of silently corrupting the expiry. `ms` *formats* numbers rather than parsing them (`2592000` ⇒ `"43m"`), which then poisoned `Date.now() + expiresIn` into `Invalid Date`. Write `"30d"`.
+- A bare number (`expiresIn: 2592000`) is now rejected instead of silently corrupting the expiry. `ms` _formats_ numbers rather than parsing them (`2592000` ⇒ `"43m"`), which then poisoned `Date.now() + expiresIn` into `Invalid Date`. Write `"30d"`.
 
 ### Changed
 

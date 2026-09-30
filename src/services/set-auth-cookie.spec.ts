@@ -24,7 +24,8 @@ vi.mock("@mongez/reinforcements", () => ({
   Random: { string: vi.fn() },
 }));
 
-import { authService } from "./auth.service";
+import type { Request } from "@warlock.js/core";
+import { authService, CookieDomainRequestRequiredError } from "./auth.service";
 
 /** A mocked `Response` exposing only the two methods under test. */
 function buildResponse() {
@@ -117,6 +118,29 @@ describe("authService.setAuthCookie", () => {
 });
 
 describe("authService.clearAuthCookie", () => {
+  it("throws when a cookie Domain resolver is configured without a request", () => {
+    stubCookieConfig({ "auth.cookie.cookieDomain": () => ".example.com" });
+    const response = buildResponse();
+
+    expect(() => authService.clearAuthCookie(response as never)).toThrow(
+      CookieDomainRequestRequiredError,
+    );
+    expect(response.clearCookie).not.toHaveBeenCalled();
+  });
+
+  it("clears the Domain cookie and its legacy host-only variant when given the request", () => {
+    stubCookieConfig({ "auth.cookie.cookieDomain": () => ".example.com" });
+    const response = buildResponse();
+
+    authService.clearAuthCookie(response as never, {}, {} as Request);
+
+    expect(response.clearCookie).toHaveBeenNthCalledWith(1, "access_token", {
+      path: "/",
+      domain: ".example.com",
+    });
+    expect(response.clearCookie).toHaveBeenNthCalledWith(2, "access_token", { path: "/" });
+  });
+
   it("clears the default-named cookie at the default path", () => {
     const response = buildResponse();
 
