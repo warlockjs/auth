@@ -284,6 +284,10 @@ export default {
 
 This is an Origin check, not a double-submit CSRF token — cheaper, and closes the gap `SameSite=Lax` leaves open, but it doesn't help a client whose privacy proxy strips both `Origin` and `Referer` (that request is rejected outright, fail-closed, rather than silently allowed). A double-submit token mechanism is deferred to a later release; track it if your threat model includes Origin-stripping clients.
 
+## Tooling can read how a route authenticates
+
+`authMiddleware()` tags the function it returns with a frozen, non-enumerable descriptor under `Symbol.for("warlock.auth")` (exported as `AUTH_MIDDLEWARE_DESCRIPTOR`, typed `AuthMiddlewareDescriptor`): `{ sources: ("header" | { cookie: string })[], userTypes: string[] }`. `warlock generate.openapi` reads it to emit bearer/cookie security for guarded routes. It never appears in logs, spreads or JSON, and changes nothing at runtime. Custom guards without it are simply documented as unauthenticated.
+
 ## Things NOT to do
 
 - Don't call `authMiddleware` outside route definition. It returns a function — the function is what runs per-request. Calling it once per request creates a fresh middleware on every hit (wasteful) and a fresh allowed-types Set (correctness if the input changes per call).
