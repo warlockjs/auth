@@ -103,7 +103,7 @@ vi.mock("../services/auth.service", () => ({
   },
 }));
 
-import { authMiddleware } from "./auth.middleware";
+import { AUTH_MIDDLEWARE_DESCRIPTOR, authMiddleware } from "./auth.middleware";
 import { AuthErrorCodes } from "../utils/auth-error-codes";
 import { makeCtx } from "./test-support/make-ctx";
 
@@ -1322,5 +1322,71 @@ describe("authMiddleware — cookie auth sets decodedAccessToken (cache-floor pr
     await middleware(makeCtx({ request, response }));
 
     expect(request.decodedAccessToken).toEqual(decoded);
+  });
+});
+
+describe("authMiddleware — descriptor tag (Symbol.for(\"warlock.auth\"))", () => {
+  const read = (middleware: object) =>
+    (middleware as Record<symbol, unknown>)[Symbol.for("warlock.auth")];
+
+  it("uses the global symbol registry key", () => {
+    expect(AUTH_MIDDLEWARE_DESCRIPTOR).toBe(Symbol.for("warlock.auth"));
+  });
+
+  it("describes the default header source with the configured default user type", () => {
+    configKey.mockImplementation((key: string) => (key === "auth.defaultUserType" ? "user" : undefined));
+
+    expect(read(authMiddleware())).toEqual({ sources: ["header"], userTypes: ["user"] });
+  });
+
+  it("describes a cookie source", () => {
+    expect(read(authMiddleware([], "cookie:token"))).toEqual({
+      sources: [{ cookie: "token" }],
+      userTypes: [],
+    });
+    expect(read(authMiddleware("user", { source: "cookie", key: "sid" }))).toEqual({
+      sources: [{ cookie: "sid" }],
+      userTypes: ["user"],
+    });
+  });
+
+  it("describes dual sources, header first", () => {
+    const dual = authMiddleware([], {
+      sources: [
+        { source: "cookie", key: "access" },
+        { source: "header" },
+      ],
+    });
+
+    expect(read(dual)).toEqual({ sources: ["header", { cookie: "access" }], userTypes: [] });
+    expect(
+      read(authMiddleware([], { sources: [{ source: "header" }, { source: "cookie", key: "access" }] })),
+    ).toEqual({ sources: ["header", { cookie: "access" }], userTypes: [] });
+  });
+
+  it("describes the allowed user types", () => {
+    expect(read(authMiddleware("admin"))).toEqual({ sources: ["header"], userTypes: ["admin"] });
+    expect(read(authMiddleware(["admin", "staff"]))).toEqual({
+      sources: ["header"],
+      userTypes: ["admin", "staff"],
+    });
+    expect(read(authMiddleware([]))).toEqual({ sources: ["header"], userTypes: [] });
+  });
+
+  it("is frozen and never enumerable, so it stays out of keys, spreads and JSON", () => {
+    const middleware = authMiddleware(["admin"], "cookie:token");
+    const descriptor = read(middleware) as { sources: unknown[]; userTypes: unknown[] };
+
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(Object.isFrozen(descriptor.sources)).toBe(true);
+    expect(Object.isFrozen(descriptor.userTypes)).toBe(true);
+    expect(Object.keys(middleware)).toEqual([]);
+    expect(Object.getOwnPropertySymbols(middleware)).toContain(AUTH_MIDDLEWARE_DESCRIPTOR);
+    expect(Object.getOwnPropertyDescriptor(middleware, AUTH_MIDDLEWARE_DESCRIPTOR)?.enumerable).toBe(false);
+    expect(Object.getOwnPropertySymbols({ ...middleware })).toEqual([]);
+    expect(JSON.stringify({ middleware })).toBe("{}");
+    expect(JSON.stringify(descriptor)).toBe(
+      '{"sources":[{"cookie":"token"}],"userTypes":["admin"]}',
+    );
   });
 });

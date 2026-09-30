@@ -15,6 +15,27 @@ import {
 } from "./csrf-origin-check";
 import { localizedLoginPath } from "./localized-login-path";
 
+/**
+ * Well-known symbol under which `authMiddleware()` tags the middleware it
+ * returns. Shared via the global symbol registry so other packages can read the
+ * descriptor structurally (`Symbol.for("warlock.auth")`) without importing auth.
+ */
+export const AUTH_MIDDLEWARE_DESCRIPTOR = Symbol.for("warlock.auth");
+
+/** A credential source an auth middleware reads: the Authorization header or a named cookie. */
+export type AuthMiddlewareDescriptorSource = "header" | { cookie: string };
+
+/**
+ * Frozen, JSON-safe description of how an `authMiddleware()` instance
+ * authenticates, stored (non-enumerably) under {@link AUTH_MIDDLEWARE_DESCRIPTOR}.
+ */
+export type AuthMiddlewareDescriptor = {
+  /** Resolved credential sources; with dual sources the header comes first. */
+  sources: AuthMiddlewareDescriptorSource[];
+  /** Resolved allowed user types; an empty array means any authenticated user. */
+  userTypes: string[];
+};
+
 /** The 401 body shape every rejection in this middleware carries. */
 type UnauthorizedPayload = { error: string; errorCode: string };
 
@@ -68,6 +89,10 @@ function tokenFromDescriptor(descriptor: Partial<AuthCredentialDescriptor>): Tok
   }
 
   return `cookie:${descriptor.key}`;
+}
+
+function descriptorSource(tokenFrom: TokenFrom): AuthMiddlewareDescriptorSource {
+  return tokenFrom === "header" ? "header" : { cookie: tokenFrom.slice("cookie:".length) };
 }
 
 function resolveAllowedTypes(value: string | string[] | undefined): string[] {
@@ -241,6 +266,19 @@ export function authMiddleware(
       errorCode: AuthErrorCodes.InvalidAccessToken,
     });
   };
+
+  const descriptorSources: AuthMiddlewareDescriptorSource[] = dualSources
+    ? [...(dualHeader ? (["header"] as const) : []), ...dualCookies.map(descriptorSource)]
+    : [descriptorSource(tokenFrom)];
+  const descriptor: AuthMiddlewareDescriptor = Object.freeze({
+    sources: Object.freeze(descriptorSources.map(source =>
+      typeof source === "string" ? source : Object.freeze({ ...source }),
+    )) as AuthMiddlewareDescriptorSource[],
+    userTypes: Object.freeze([...allowedTypes]) as string[],
+  });
+
+  // Non-enumerable so the tag never shows up in logs, spreads or JSON.
+  Object.defineProperty(auth, AUTH_MIDDLEWARE_DESCRIPTOR, { value: descriptor, enumerable: false });
 
   return auth;
 }
