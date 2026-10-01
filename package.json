@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/auth",
-  "version": "5.28.0",
+  "version": "5.29.0",
   "type": "module",
   "description": "Authentication system for Warlock.js applications",
   "main": "./src/index.ts",
