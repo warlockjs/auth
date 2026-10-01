@@ -25,13 +25,13 @@ npm install @warlock.js/auth
 
 ## Foundations
 
-1. **Users extend `Auth`.** Your `User`, `Admin`, etc. extend the shared base model that knows how to issue tokens and verify passwords. Multiple user types coexist (see [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md)).
+1. **Users extend `Auth`.** Your `User`, `Admin`, etc. extend the shared base model that knows how to issue tokens and verify passwords. Multiple user types coexist (see the `customize-user-type` topic).
 2. **`auth.userType.<name>` config maps a user-type slug to the model class.** The middleware uses this to hydrate the right model from a token.
 3. **Tokens persist.** Both `AccessToken` and `RefreshToken` are Cascade models — issuing a token writes a row; logout / revoke deletes or marks-revoked. Stateless JWT verification + stateful revocation list.
 4. **`authMiddleware` gates or resolves routes.** Use `authMiddleware("user")` for a typed hard gate, `authMiddleware()` for the configured/default user type, or `authMiddleware({ source: "cookie", key: "token", optional: true })` for a public route that receives a valid user when present. The object form can set a page-local login redirect. Legacy `authMiddleware(userType, "cookie:name")` remains valid.
 5. **`authService.login(Model, credentials, deviceInfo?)` is the full happy path.** Verifies credentials, creates token pair (access + refresh), emits events, returns `{ user, tokens }`.
 6. **Refresh-token rotation is on by default.** Each refresh consumes the old token and issues new ones from the same "family" — replay detection revokes the family.
-7. **JWT secret lives in the env.** Generate with `warlock jwt.generate` (see [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md)).
+7. **JWT secret lives in the env.** Generate with `warlock jwt.generate` (see the `run-auth-commands` topic).
 
 ## Minimal wire-up
 
@@ -113,26 +113,26 @@ Two values that look right and are not:
 
 | If the task is about… | Load |
 | --- | --- |
-| Gating routes with `authMiddleware(allowedUserType)`, any-authenticated vs typed access | [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) |
-| `authService.login(...)`, `attemptLogin`, full credentials-to-tokens flow + logout | [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) |
-| Token lifecycle — `generateAccessToken`, `createRefreshToken`, rotation, family revocation, max-per-user | [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) |
-| Register a new user + issue tokens in one flow | [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) |
-| Multi-user-type apps (`user`, `admin`, `client`), `config.auth.userType.<name>` mapping | [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) |
-| `warlock jwt.generate` + `warlock auth.cleanup` CLI commands | [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) |
+| Gating routes with `authMiddleware(allowedUserType)`, any-authenticated vs typed access | The `protect-routes` topic |
+| `authService.login(...)`, `attemptLogin`, full credentials-to-tokens flow + logout | The `handle-login-and-logout` topic |
+| Token lifecycle — `generateAccessToken`, `createRefreshToken`, rotation, family revocation, max-per-user | The `manage-tokens` topic |
+| Register a new user + issue tokens in one flow | The `register-user` topic |
+| Multi-user-type apps (`user`, `admin`, `client`), `config.auth.userType.<name>` mapping | The `customize-user-type` topic |
+| `warlock jwt.generate` + `warlock auth.cleanup` CLI commands | The `run-auth-commands` topic |
 
 ## Things NOT to do
 
 - Don't write your own JWT signing logic — use `authService` / `jwt` from this package so signature/secret/expiry stay consistent.
 - Don't store the JWT secret in the model layer or anywhere user-modifiable. It lives in `.env` only.
-- Don't return the raw `User` from a login endpoint without shaping output. Configure `static toJsonColumns` or `static resource` (see [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md)).
-- Don't run `auth.cleanup` from app boot. Schedule it (cron, scheduler) as a periodic task — see [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md).
+- Don't return the raw `User` from a login endpoint without shaping output. Configure `static toJsonColumns` or `static resource` (see the `define-model` topic of the `warlock-js-cascade` skill).
+- Don't run `auth.cleanup` from app boot. Schedule it (cron, scheduler) as a periodic task — see the `scheduler-basics` topic of the `warlock-js-scheduler` skill.
 
 
 ## customize-token-storage  `@warlock.js/auth/customize-token-storage/SKILL.md`
 
 ---
 name: customize-token-storage
-description: 'Override the persisted AccessToken / RefreshToken models to add columns (multi-tenant `organization_id`, device metadata), rename, or change storage — without forking the package. Extend the model + `schema.extend(...)`, register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`, override `issue()` to populate the new column, and add a migration. Triggers: `accessToken.model`, `refreshToken.model`, `AccessToken.issue`, `RefreshToken.issue`, `accessTokenSchema`, `refreshTokenSchema`, "add a column to the token table", "multi-tenant tokens", "organization_id on access token", "override the token model", "custom token storage"; typical import `import { AccessToken, accessTokenSchema } from "@warlock.js/auth"`. Skip: multiple user TYPES (not token storage) — `@warlock.js/auth/customize-user-type/SKILL.md`; the token lifecycle API — `@warlock.js/auth/manage-tokens/SKILL.md`; the config blocks themselves — `@warlock.js/auth/auth-basics/SKILL.md`.'
+description: 'Override the persisted AccessToken / RefreshToken models to add columns (multi-tenant `organization_id`, device metadata), rename, or change storage — without forking the package. Extend the model + `schema.extend(...)`, register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`, override `issue()` to populate the new column, and add a migration. Triggers: `accessToken.model`, `refreshToken.model`, `AccessToken.issue`, `RefreshToken.issue`, `accessTokenSchema`, `refreshTokenSchema`, "add a column to the token table", "multi-tenant tokens", "organization_id on access token", "override the token model", "custom token storage"; typical import `import { AccessToken, accessTokenSchema } from "@warlock.js/auth"`. Skip: multiple user TYPES (not token storage) — the `customize-user-type` topic; the token lifecycle API — the `manage-tokens` topic; the config blocks themselves — the `auth-basics` topic.'
 ---
 
 # Customize token storage
@@ -242,7 +242,7 @@ The new column needs a real database column. Add it to your token-table migratio
 this.uuid("organization_id").references("organizations").onDelete("cascade").index();
 ```
 
-See [`@warlock.js/cascade/write-migration/SKILL.md`](@warlock.js/cascade/write-migration/SKILL.md) for the migration mechanics.
+See the `write-migration` topic of the `warlock-js-cascade` skill for the migration mechanics.
 
 ## Why all three — the strict-mode trap
 
@@ -287,16 +287,16 @@ If you rename a column, override the statics **and these getters** so they map t
 
 ## See also
 
-- [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) — multiple user *types* (a different axis from token *storage*).
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — the token lifecycle your statics power.
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — extending models and schemas.
+- The `customize-user-type` topic — multiple user *types* (a different axis from token *storage*).
+- The `manage-tokens` topic — the token lifecycle your statics power.
+- The `define-model` topic of the `warlock-js-cascade` skill — extending models and schemas.
 
 
 ## customize-user-type  `@warlock.js/auth/customize-user-type/SKILL.md`
 
 ---
 name: customize-user-type
-description: 'Support multiple user types (user / admin / client / staff) in one auth system — each Auth subclass overrides userType, config.auth.userType.<slug> maps slug to model class, authMiddleware(''admin'') gates per type. Triggers: `Auth`, `userType`, `config.auth.userType`, `Authenticable`, `@RegisterModel`, `confirmPassword`; "add admins and users", "multiple user types", "separate client and vendor personas", "per-type login"; typical import `import { Auth } from "@warlock.js/auth"`. Skip: `authMiddleware` semantics — `@warlock.js/auth/protect-routes/SKILL.md`; login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; RBAC libs `casl`, `accesscontrol`, `rbac`.'
+description: 'Support multiple user types (user / admin / client / staff) in one auth system — each Auth subclass overrides userType, config.auth.userType.<slug> maps slug to model class, authMiddleware(''admin'') gates per type. Triggers: `Auth`, `userType`, `config.auth.userType`, `Authenticable`, `@RegisterModel`, `confirmPassword`; "add admins and users", "multiple user types", "separate client and vendor personas", "per-type login"; typical import `import { Auth } from "@warlock.js/auth"`. Skip: `authMiddleware` semantics — the `protect-routes` topic; login flow — the `handle-login-and-logout` topic; RBAC libs `casl`, `accesscontrol`, `rbac`.'
 ---
 
 # Customize user type (multi-user-type auth)
@@ -399,7 +399,7 @@ router.get("/back-office", backOfficeController, { middleware: [authMiddleware([
 router.get("/dashboard", dashboardController, { middleware: [authMiddleware([])] }); // any logged-in
 ```
 
-See [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md).
+See the `protect-routes` topic.
 
 ## Login per user type — pass the right Model
 
@@ -459,16 +459,16 @@ abstract class Auth<TSchema> extends Model<TSchema> implements Authenticable {
 
 ## See also
 
-- [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — `authMiddleware` semantics
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — passing the right Model to `login`
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — `@RegisterModel`, models in general
+- The `protect-routes` topic — `authMiddleware` semantics
+- The `handle-login-and-logout` topic — passing the right Model to `login`
+- The `define-model` topic of the `warlock-js-cascade` skill — `@RegisterModel`, models in general
 
 
 ## handle-login-and-logout  `@warlock.js/auth/handle-login-and-logout/SKILL.md`
 
 ---
 name: handle-login-and-logout
-description: 'Run the full login flow via authService.login(Model, credentials, deviceInfo?) — verify password, create access + refresh token pair, fire events. Logout via authService.logout(user, accessToken?, refreshToken?) revokes tokens. Triggers: `authService.login`, `authService.logout`, `authService.attemptLogin`, `authService.refreshTokens`, `authService.revokeAllTokens`, `authEvents`; "build a login endpoint", "POST /login controller", "logout from all devices", "verify credentials and issue tokens"; typical import `import { authService, authEvents } from "@warlock.js/auth"`. Skip: token internals — `@warlock.js/auth/manage-tokens/SKILL.md`; sign-up — `@warlock.js/auth/register-user/SKILL.md`; competing libs `passport-local`, `next-auth` credentials.'
+description: 'Run the full login flow via authService.login(Model, credentials, deviceInfo?) — verify password, create access + refresh token pair, fire events. Logout via authService.logout(user, accessToken?, refreshToken?) revokes tokens. Triggers: `authService.login`, `authService.logout`, `authService.attemptLogin`, `authService.refreshTokens`, `authService.revokeAllTokens`, `authEvents`; "build a login endpoint", "POST /login controller", "logout from all devices", "verify credentials and issue tokens"; typical import `import { authService, authEvents } from "@warlock.js/auth"`. Skip: token internals — the `manage-tokens` topic; sign-up — the `register-user` topic; competing libs `passport-local`, `next-auth` credentials.'
 ---
 
 # Login + logout
@@ -620,7 +620,7 @@ export const refreshController: RequestHandler = async ({ request, response }) =
 };
 ```
 
-Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md).
+Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See the `manage-tokens` topic.
 
 ## Auth events
 
@@ -657,9 +657,9 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 
 ## See also
 
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token lifecycle, rotation, family revocation
-- [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — sign-up that issues tokens after creation
-- [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — where the access token gets consumed
+- The `manage-tokens` topic — token lifecycle, rotation, family revocation
+- The `register-user` topic — sign-up that issues tokens after creation
+- The `protect-routes` topic — where the access token gets consumed
 
 ## Browser sessions for Web pages
 
@@ -670,7 +670,7 @@ For cookie sessions read by `@warlock.js/web` pages, log in with `authService.lo
 
 ---
 name: login-with-providers
-description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), GitHub, Discord, LinkedIn, Apple (`form_post` callback), Facebook and X, passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "login with GitHub", "Sign in with Apple", "login with Discord", "login with LinkedIn", "login with Facebook", "login with X", `auth.providers.github`, "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; email tokens — `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`; defining an SMS channel — `@warlock.js/notifications/define-channel/SKILL.md`.'
+description: 'Log in without a password — Google (OIDC code + PKCE + state + nonce, id_token verified with `jose`), GitHub, Discord, LinkedIn, Apple (`form_post` callback), Facebook and X, passkeys (WebAuthn via `@simplewebauthn/server`) and phone one-time codes (delivered through a `@warlock.js/notifications` channel). Every method ends in `authService.completeLogin(user)`, the same tokens, rows and events as password login. `startProviderLogin`, `completeProviderLogin`, `generatePasskeyRegistrationOptions`, `verifyPasskeyRegistration`, `generatePasskeyAuthenticationOptions`, `verifyPasskeyAuthentication`, `requestOtp`, `verifyOtp`, `otpRequestThrottleMiddleware`, `otpVerifyThrottleMiddleware`, `AuthProvider`. Triggers: "login with Google", "sign in with Google", "login with GitHub", "Sign in with Apple", "login with Discord", "login with LinkedIn", "login with Facebook", "login with X", `auth.providers.github`, "OAuth", "OIDC", "passkeys", "WebAuthn", "passwordless", "SMS code login", "WhatsApp OTP", "phone login", `warlock add auth-google`, `warlock add auth-passkeys`, `AuthProviderSdkMissingError`, `InvalidProviderCallbackError`, `ProviderEmailNotVerifiedError`, `InvalidPasskeyError`, `EC009`, `EC010`, `EC011`, `auth.providers`, `auth.passkeys`, `auth.otp`; typical import `import { completeProviderLogin, verifyOtp } from "@warlock.js/auth"`. Skip: password login — the `handle-login-and-logout` topic; email tokens — the `verify-email-and-reset-password` topic; defining an SMS channel — the `define-channel` topic of the `warlock-js-notifications` skill.'
 ---
 
 # Login with an OAuth provider, passkeys, or a phone code
@@ -948,16 +948,16 @@ router.post("/auth/otp/verify", async ({ request, response }) => {
 
 ## See also
 
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md): password login and `setAuthCookie`
-- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md): the throttle the OTP presets wrap
-- [`@warlock.js/notifications/define-channel/SKILL.md`](@warlock.js/notifications/define-channel/SKILL.md): an SMS/WhatsApp channel
+- The `handle-login-and-logout` topic: password login and `setAuthCookie`
+- The `throttle-login-attempts` topic: the throttle the OTP presets wrap
+- The `define-channel` topic of the `warlock-js-notifications` skill: an SMS/WhatsApp channel
 
 
 ## manage-tokens  `@warlock.js/auth/manage-tokens/SKILL.md`
 
 ---
 name: manage-tokens
-description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; CLI cleanup — `@warlock.js/auth/run-auth-commands/SKILL.md`; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
+description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — the `handle-login-and-logout` topic; CLI cleanup — the `run-auth-commands` topic; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
 ---
 
 # Manage tokens
@@ -1112,7 +1112,7 @@ scheduler.addJob(
 );
 ```
 
-Or use the bundled CLI command — see [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md).
+Or use the bundled CLI command — see the `run-auth-commands` topic.
 
 ## JWT helpers
 
@@ -1132,7 +1132,7 @@ const decodedRefresh = await jwt.verifyRefreshToken(refreshToken);
 
 **`jwt.verify` / `jwt.verifyRefreshToken` require an `exp` claim** (since 4.12.0) and reject a token without one. There is no deadline to check on such a token, so verification would otherwise succeed indefinitely. `requiredClaims` is additive — `jwt.verify(token, { requiredClaims: ["iat"] })` requires `iat` **and** `exp`; you cannot opt out of `exp`. If you want a token that effectively never expires, use `expiresIn: NO_EXPIRATION` (`"100y"`), which stamps a real `exp` about a century out.
 
-If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — they are still in your token tables and no date-based cleanup can reach them.
+If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in the `run-auth-commands` topic — they are still in your token tables and no date-based cleanup can reach them.
 
 `authService.generateAccessToken` / `createRefreshToken` read `config.auth.accessToken.expiresIn` / `config.auth.refreshToken.expiresIn`, validate them, and throw naming the key if the value is not a positive `ms` duration — before anything is signed, persisted, or capped.
 
@@ -1148,9 +1148,9 @@ The package signs access and refresh tokens with independent secrets — `config
 
 ## See also
 
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — full login/logout flow that uses these primitives
-- [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — the bundled cleanup command
-- [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md) — scheduling cleanup
+- The `handle-login-and-logout` topic — full login/logout flow that uses these primitives
+- The `run-auth-commands` topic — the bundled cleanup command
+- The `scheduler-basics` topic of the `warlock-js-scheduler` skill — scheduling cleanup
 
 
 ## overview  `@warlock.js/auth/overview/SKILL.md`
@@ -1186,35 +1186,35 @@ Nine task skills. Most apps need `auth-basics` + `protect-routes` + `handle-logi
 
 ### Foundations
 
-#### [`auth-basics`](@warlock.js/auth/auth-basics/SKILL.md)
+#### `auth-basics`
 Start here. The `Auth` base model, `authMiddleware` gate, `authService` (login/logout/refresh), AccessToken + RefreshToken persistence, multi-user-type support.
 
 ### The flows
 
-#### [`handle-login-and-logout`](@warlock.js/auth/handle-login-and-logout/SKILL.md)
+#### `handle-login-and-logout`
 `authService.login(Model, credentials, deviceInfo?)` — verify password, issue the token pair, fire events. `authService.logout(user, accessToken?, refreshToken?)` — revoke tokens. For your `POST /login` and `POST /logout` controllers.
 
-#### [`register-user`](@warlock.js/auth/register-user/SKILL.md)
+#### `register-user`
 Sign up a new user and issue the first token pair — `User.create({ ...password: await hashPassword(plain) })` then `authService.createTokenPair(user)`. For `POST /register`.
 
-#### [`protect-routes`](@warlock.js/auth/protect-routes/SKILL.md)
+#### `protect-routes`
 `authMiddleware` object and legacy overloads: typed/default hard gates, optional resolution, credential source, and page-local redirects. Sets `request.locals.user` + `request.decodedAccessToken` when a user resolves.
 
 ### Going deeper
 
-#### [`manage-tokens`](@warlock.js/auth/manage-tokens/SKILL.md)
+#### `manage-tokens`
 The token lifecycle — `generateAccessToken`, `createRefreshToken`, `createTokenPair`, `refreshTokens` (rotation + replay detection), `revokeAllTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`. For custom login/registration, token revocation, "logout everywhere", and scheduled cleanup.
 
-#### [`customize-user-type`](@warlock.js/auth/customize-user-type/SKILL.md)
+#### `customize-user-type`
 Support multiple user types in one system — each `Auth` subclass overrides `userType`, `config.auth.userType.<slug>` maps the slug to a model class, `authMiddleware("admin")` / `authMiddleware(["admin", "staff"])` gates per type.
 
-#### [`customize-token-storage`](@warlock.js/auth/customize-token-storage/SKILL.md)
+#### `customize-token-storage`
 Override the persisted `AccessToken` / `RefreshToken` models to add columns (multi-tenant `organization_id`), rename, or change storage — extend the model + schema and register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`.
 
-#### [`throttle-login-attempts`](@warlock.js/auth/throttle-login-attempts/SKILL.md)
+#### `throttle-login-attempts`
 Brute-force / credential-stuffing protection — `loginThrottleMiddleware()` counts only failed logins, resets on success, locks per-account + per-IP after a threshold, and rejects pre-controller with 429. Cache-backed, fails open on a cache outage.
 
-#### [`run-auth-commands`](@warlock.js/auth/run-auth-commands/SKILL.md)
+#### `run-auth-commands`
 Two CLI commands — `warlock jwt.generate` (strong JWT secret → `.env`) and `warlock auth.cleanup` (remove expired refresh tokens). Register via `registerJWTSecretGeneratorCommand()` and `registerAuthCleanupCommand()`.
 
 ## What this package deliberately doesn't do
@@ -1226,16 +1226,16 @@ Two CLI commands — `warlock jwt.generate` (strong JWT secret → `.env`) and `
 
 ## See also
 
-- [`@warlock.js/core/warlock-conventions/SKILL.md`](@warlock.js/core/warlock-conventions/SKILL.md) — the framework auth runs inside (routing, middleware, config).
-- [`@warlock.js/cascade/cascade-basics/SKILL.md`](@warlock.js/cascade/cascade-basics/SKILL.md) — the ORM behind the `Auth`, `AccessToken`, and `RefreshToken` models.
-- `mongez-agent-kit-authoring-skills` (load via agent-kit sync) — how this `overview/SKILL.md` becomes `.claude/skills/warlock-js-auth-overview/`.
+- The `warlock-conventions` topic of the `warlock-js-core` skill — the framework auth runs inside (routing, middleware, config).
+- The `cascade-basics` topic of the `warlock-js-cascade` skill — the ORM behind the `Auth`, `AccessToken`, and `RefreshToken` models.
+- `mongez-agent-kit-authoring-skills` (load via agent-kit sync) — how this `overview` topic becomes `.claude/skills/warlock-js-auth/overview.md`.
 
 
 ## protect-routes  `@warlock.js/auth/protect-routes/SKILL.md`
 
 ---
 name: protect-routes
-description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — `@warlock.js/auth/customize-user-type/SKILL.md`; issuing the token — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
+description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — the `customize-user-type` topic; issuing the token — the `handle-login-and-logout` topic; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
 ---
 
 # Gate routes with `authMiddleware`
@@ -1284,7 +1284,7 @@ router.get("/staff", staffController, {
 });
 ```
 
-The `userType` slug must match a key in `config.auth.userType.<name>` — see [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md).
+The `userType` slug must match a key in `config.auth.userType.<name>` — see the `customize-user-type` topic.
 
 ## What the middleware does
 
@@ -1407,7 +1407,7 @@ The middleware uses the framework's `response.unauthorized({...})` shape. To ove
 
 That last one is the difference between a role check and an authorization model: without it, an account-creation endpoint gated on `authMiddleware("admin")` is a privilege-escalation path.
 
-Install [`@warlock.js/access`](@warlock.js/access/overview/SKILL.md) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
+Install `@warlock.js/access` (the `overview` topic of the `warlock-js-access` skill) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
 
 ```ts
 import { router, type RequestHandler } from "@warlock.js/core";
@@ -1532,17 +1532,17 @@ This is an Origin check, not a double-submit CSRF token — cheaper, and closes 
 
 ## See also
 
-- [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) — config and multi-user-type semantics
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — where the access token gets issued in the first place
-- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — brute-force throttle to stack in front of the login route
-- [`@warlock.js/access/overview/SKILL.md`](@warlock.js/access/overview/SKILL.md) — permissions, roles, and who-may-act-on-whom policies, when user-type gating isn't enough
+- The `customize-user-type` topic — config and multi-user-type semantics
+- The `handle-login-and-logout` topic — where the access token gets issued in the first place
+- The `throttle-login-attempts` topic — brute-force throttle to stack in front of the login route
+- The `overview` topic of the `warlock-js-access` skill — permissions, roles, and who-may-act-on-whom policies, when user-type gating isn't enough
 
 
 ## register-user  `@warlock.js/auth/register-user/SKILL.md`
 
 ---
 name: register-user
-description: 'Sign up a new user and issue the initial token pair — User.create({...password: await hashPassword(plain)}) then authService.createTokenPair(user). Triggers: `User.create`, `hashPassword`, `verifyPassword`, `authService.createTokenPair`, `toJsonColumns`, `strongPassword`, `authEvents`; "build a register endpoint", "POST /register controller", "sign up a new user", "hash password on signup", "email verification flow"; typical import `import { authService } from "@warlock.js/auth"; import { hashPassword } from "@warlock.js/core"`. Skip: login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; token internals — `@warlock.js/auth/manage-tokens/SKILL.md`; competing libs `bcrypt`, `bcryptjs`, `argon2`.'
+description: 'Sign up a new user and issue the initial token pair — User.create({...password: await hashPassword(plain)}) then authService.createTokenPair(user). Triggers: `User.create`, `hashPassword`, `verifyPassword`, `authService.createTokenPair`, `toJsonColumns`, `strongPassword`, `authEvents`; "build a register endpoint", "POST /register controller", "sign up a new user", "hash password on signup", "email verification flow"; typical import `import { authService } from "@warlock.js/auth"; import { hashPassword } from "@warlock.js/core"`. Skip: login — the `handle-login-and-logout` topic; token internals — the `manage-tokens` topic; competing libs `bcrypt`, `bcryptjs`, `argon2`.'
 ---
 
 # Register-and-issue-tokens flow
@@ -1600,7 +1600,7 @@ export const registerController: RequestHandler = async ({ request, response }) 
 };
 ```
 
-That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see [`@warlock.js/seal/handle-seal-errors/SKILL.md`](@warlock.js/seal/handle-seal-errors/SKILL.md) for catching validation failures.
+That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see the `handle-seal-errors` topic of the `warlock-js-seal` skill for catching validation failures.
 
 ## Hash the password on the way in
 
@@ -1656,7 +1656,7 @@ const tokens = await authService.createTokenPair(user);
 return response.successCreate({ user, tokens });
 ```
 
-Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See [`@warlock.js/auth/verify-email-and-reset-password/SKILL.md`](@warlock.js/auth/verify-email-and-reset-password/SKILL.md).
+Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See the `verify-email-and-reset-password` topic.
 
 ## Side effects via auth events
 
@@ -1680,20 +1680,20 @@ Cleaner alternative: emit your own `user.registered` event from the controller a
 - Don't pass the plain password to `User.create()`. `await hashPassword(plain)` first.
 - Don't return the user without `toJsonColumns` / `resource` shaping — the password hash will leak otherwise.
 - Don't issue tokens before validating the user shape. `User.create` runs validation; let it throw on bad input before tokens get created.
-- Don't run "send welcome email" inline in the controller. Push it to a queue or run it after-commit via the outbox pattern — see [`@warlock.js/cascade/manage-transactions/SKILL.md`](@warlock.js/cascade/manage-transactions/SKILL.md).
+- Don't run "send welcome email" inline in the controller. Push it to a queue or run it after-commit via the outbox pattern — see the `manage-transactions` topic of the `warlock-js-cascade` skill.
 
 ## See also
 
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — login flow (same `createTokenPair` step)
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token issuance internals
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — `toJsonColumns` / `resource` for public output
+- The `handle-login-and-logout` topic — login flow (same `createTokenPair` step)
+- The `manage-tokens` topic — token issuance internals
+- The `define-model` topic of the `warlock-js-cascade` skill — `toJsonColumns` / `resource` for public output
 
 
 ## run-auth-commands  `@warlock.js/auth/run-auth-commands/SKILL.md`
 
 ---
 name: run-auth-commands
-description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
+description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — the `manage-tokens` topic; in-process scheduling — the `scheduler-basics` topic of the `warlock-js-scheduler` skill; competing tools `dotenv-cli`, `node-cron`.'
 ---
 
 # Run auth commands
@@ -1759,7 +1759,7 @@ scheduler.addJob(
 scheduler.start();
 ```
 
-In-process — no shell call. See [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md).
+In-process — no shell call. See the `scheduler-basics` topic of the `warlock-js-scheduler` skill.
 
 ### Via system cron
 
@@ -1848,15 +1848,15 @@ Register it the same way as the bundled commands — call the factory inside `de
 
 ## See also
 
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — `cleanupExpiredTokens` internals
-- [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md) — in-process scheduling
+- The `manage-tokens` topic — `cleanupExpiredTokens` internals
+- The `scheduler-basics` topic of the `warlock-js-scheduler` skill — in-process scheduling
 
 
 ## throttle-login-attempts  `@warlock.js/auth/throttle-login-attempts/SKILL.md`
 
 ---
 name: throttle-login-attempts
-description: 'Brute-force / credential-stuffing protection via `loginThrottleMiddleware` — a failure-aware route gate that counts only failed logins (resets on success), locks per-account and per-source after a threshold, and rejects pre-controller with 429 so the DB lookup and bcrypt verify are skipped. Cache-backed (shared across replicas), fixed-window, fails open on a cache outage. Triggers: `loginThrottleMiddleware`, `AuthErrorCodes.TooManyAttempts`, `EC004`, "rate limit login", "brute force protection", "lock account after failed logins", "throttle login attempts", "too many login attempts 429"; typical import `import { loginThrottleMiddleware } from "@warlock.js/auth"`. Skip: generic per-route request rate limiting that counts every request (use core `middleware.rateLimit`); gating a route by auth — `@warlock.js/auth/protect-routes/SKILL.md`; issuing tokens — `@warlock.js/auth/handle-login-and-logout/SKILL.md`.'
+description: 'Brute-force / credential-stuffing protection via `loginThrottleMiddleware` — a failure-aware route gate that counts only failed logins (resets on success), locks per-account and per-source after a threshold, and rejects pre-controller with 429 so the DB lookup and bcrypt verify are skipped. Cache-backed (shared across replicas), fixed-window, fails open on a cache outage. Triggers: `loginThrottleMiddleware`, `AuthErrorCodes.TooManyAttempts`, `EC004`, "rate limit login", "brute force protection", "lock account after failed logins", "throttle login attempts", "too many login attempts 429"; typical import `import { loginThrottleMiddleware } from "@warlock.js/auth"`. Skip: generic per-route request rate limiting that counts every request (use core `middleware.rateLimit`); gating a route by auth — the `protect-routes` topic; issuing tokens — the `handle-login-and-logout` topic.'
 ---
 
 # Throttle login attempts with `loginThrottleMiddleware`
@@ -1968,16 +1968,16 @@ They compose. For a hard ceiling on request volume *and* failure-aware account l
 
 ## See also
 
-- [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — gate a route behind a valid token (`authMiddleware`); stack the throttle in front of it on login routes.
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — the login flow whose failures this middleware counts.
-- [`@warlock.js/core/use-middleware/SKILL.md`](@warlock.js/core/use-middleware/SKILL.md) — `middleware.rateLimit` and the built-in middleware suite.
+- The `protect-routes` topic — gate a route behind a valid token (`authMiddleware`); stack the throttle in front of it on login routes.
+- The `handle-login-and-logout` topic — the login flow whose failures this middleware counts.
+- The `use-middleware` topic of the `warlock-js-core` skill — `middleware.rateLimit` and the built-in middleware suite.
 
 
 ## verify-email-and-reset-password  `@warlock.js/auth/verify-email-and-reset-password/SKILL.md`
 
 ---
 name: verify-email-and-reset-password
-description: 'Email verification and password reset with hashed, single-use, expiring, purpose-bound tokens delivered through `@warlock.js/notifications` — `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)`, `resetPassword(token, newPassword)`, the `requireVerifiedEmail()` guard, and the `tokenIssueThrottleMiddleware` / `tokenConsumeThrottleMiddleware` presets. Reset revokes every access token, refresh token and cookie session; a reset request answers the same for unknown emails. Triggers: `sendEmailVerification`, `verifyEmail`, `requestPasswordReset`, `resetPassword`, `requireVerifiedEmail`, `isEmailVerified`, `OneTimeToken`, `InvalidOneTimeTokenError`, `EmailNotVerifiedError`, `NotificationsUnavailableError`, `EC007`, `EC008`, `auth.verification`, `auth.passwordReset`; "verify email", "confirm email address", "forgot password", "reset password link", "block unverified users", "resend verification email"; typical import `import { requestPasswordReset, resetPassword } from "@warlock.js/auth"`. Skip: sign-up itself — `@warlock.js/auth/register-user/SKILL.md`; login throttling — `@warlock.js/auth/throttle-login-attempts/SKILL.md`; defining notifications — `@warlock.js/notifications/define-notification/SKILL.md`.'
+description: 'Email verification and password reset with hashed, single-use, expiring, purpose-bound tokens delivered through `@warlock.js/notifications` — `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)`, `resetPassword(token, newPassword)`, the `requireVerifiedEmail()` guard, and the `tokenIssueThrottleMiddleware` / `tokenConsumeThrottleMiddleware` presets. Reset revokes every access token, refresh token and cookie session; a reset request answers the same for unknown emails. Triggers: `sendEmailVerification`, `verifyEmail`, `requestPasswordReset`, `resetPassword`, `requireVerifiedEmail`, `isEmailVerified`, `OneTimeToken`, `InvalidOneTimeTokenError`, `EmailNotVerifiedError`, `NotificationsUnavailableError`, `EC007`, `EC008`, `auth.verification`, `auth.passwordReset`; "verify email", "confirm email address", "forgot password", "reset password link", "block unverified users", "resend verification email"; typical import `import { requestPasswordReset, resetPassword } from "@warlock.js/auth"`. Skip: sign-up itself — the `register-user` topic; login throttling — the `throttle-login-attempts` topic; defining notifications — the `define-notification` topic of the `warlock-js-notifications` skill.'
 ---
 
 # Verify email + reset password
@@ -2109,8 +2109,8 @@ The default notifications are `defineNotification` objects (`type: "auth.email-v
 
 ## See also
 
-- [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — where `sendEmailVerification` is usually called
-- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — the underlying throttle
-- [`@warlock.js/notifications/configure-notifications/SKILL.md`](@warlock.js/notifications/configure-notifications/SKILL.md) — mail channel setup
+- The `register-user` topic — where `sendEmailVerification` is usually called
+- The `throttle-login-attempts` topic — the underlying throttle
+- The `configure-notifications` topic of the `warlock-js-notifications` skill — mail channel setup
 
 

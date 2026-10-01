@@ -1,6 +1,6 @@
 ---
 name: customize-token-storage
-description: 'Override the persisted AccessToken / RefreshToken models to add columns (multi-tenant `organization_id`, device metadata), rename, or change storage — without forking the package. Extend the model + `schema.extend(...)`, register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`, override `issue()` to populate the new column, and add a migration. Triggers: `accessToken.model`, `refreshToken.model`, `AccessToken.issue`, `RefreshToken.issue`, `accessTokenSchema`, `refreshTokenSchema`, "add a column to the token table", "multi-tenant tokens", "organization_id on access token", "override the token model", "custom token storage"; typical import `import { AccessToken, accessTokenSchema } from "@warlock.js/auth"`. Skip: multiple user TYPES (not token storage) — `@warlock.js/auth/customize-user-type/SKILL.md`; the token lifecycle API — `@warlock.js/auth/manage-tokens/SKILL.md`; the config blocks themselves — `@warlock.js/auth/auth-basics/SKILL.md`.'
+description: 'Override the persisted AccessToken / RefreshToken models to add columns (multi-tenant `organization_id`, device metadata), rename, or change storage — without forking the package. Extend the model + `schema.extend(...)`, register it under `config.auth.accessToken.model` / `config.auth.refreshToken.model`, override `issue()` to populate the new column, and add a migration. Triggers: `accessToken.model`, `refreshToken.model`, `AccessToken.issue`, `RefreshToken.issue`, `accessTokenSchema`, `refreshTokenSchema`, "add a column to the token table", "multi-tenant tokens", "organization_id on access token", "override the token model", "custom token storage"; typical import `import { AccessToken, accessTokenSchema } from "@warlock.js/auth"`. Skip: multiple user TYPES (not token storage) — the `customize-user-type` topic; the token lifecycle API — the `manage-tokens` topic; the config blocks themselves — the `auth-basics` topic.'
 ---
 
 # Customize token storage
@@ -110,7 +110,7 @@ The new column needs a real database column. Add it to your token-table migratio
 this.uuid("organization_id").references("organizations").onDelete("cascade").index();
 ```
 
-See [`@warlock.js/cascade/write-migration/SKILL.md`](@warlock.js/cascade/write-migration/SKILL.md) for the migration mechanics.
+See the `write-migration` topic of the `warlock-js-cascade` skill for the migration mechanics.
 
 ## Why all three — the strict-mode trap
 
@@ -155,6 +155,6 @@ If you rename a column, override the statics **and these getters** so they map t
 
 ## See also
 
-- [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) — multiple user *types* (a different axis from token *storage*).
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — the token lifecycle your statics power.
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — extending models and schemas.
+- The `customize-user-type` topic — multiple user *types* (a different axis from token *storage*).
+- The `manage-tokens` topic — the token lifecycle your statics power.
+- The `define-model` topic of the `warlock-js-cascade` skill — extending models and schemas.

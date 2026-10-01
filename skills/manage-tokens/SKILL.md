@@ -1,6 +1,6 @@
 ---
 name: manage-tokens
-description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; CLI cleanup — `@warlock.js/auth/run-auth-commands/SKILL.md`; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
+description: 'Token lifecycle — generateAccessToken, createRefreshToken, createTokenPair, refreshTokens (with rotation + replay detection), revokeAllTokens, revokeTokenFamily, cleanupExpiredTokens, getActiveSessions. Triggers: `createTokenPair`, `refreshTokens`, `revokeTokenFamily`, `cleanupExpiredTokens`, `getActiveSessions`, `jwt.generate`, `jwt.verify`, `AccessToken`, `RefreshToken`; "rotate refresh tokens", "detect token replay", "logout from all devices", "list active sessions", "clean up expired tokens"; typical import `import { authService, jwt } from "@warlock.js/auth"`. Skip: login flow — the `handle-login-and-logout` topic; CLI cleanup — the `run-auth-commands` topic; competing libs `jsonwebtoken`, `jose`, `fast-jwt`.'
 ---
 
 # Manage tokens
@@ -155,7 +155,7 @@ scheduler.addJob(
 );
 ```
 
-Or use the bundled CLI command — see [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md).
+Or use the bundled CLI command — see the `run-auth-commands` topic.
 
 ## JWT helpers
 
@@ -175,7 +175,7 @@ const decodedRefresh = await jwt.verifyRefreshToken(refreshToken);
 
 **`jwt.verify` / `jwt.verifyRefreshToken` require an `exp` claim** (since 4.12.0) and reject a token without one. There is no deadline to check on such a token, so verification would otherwise succeed indefinitely. `requiredClaims` is additive — `jwt.verify(token, { requiredClaims: ["iat"] })` requires `iat` **and** `exp`; you cannot opt out of `exp`. If you want a token that effectively never expires, use `expiresIn: NO_EXPIRATION` (`"100y"`), which stamps a real `exp` about a century out.
 
-If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — they are still in your token tables and no date-based cleanup can reach them.
+If tokens minted before 4.12.0 may lack an `exp`, see `warlock auth.purge-never-expiring` in the `run-auth-commands` topic — they are still in your token tables and no date-based cleanup can reach them.
 
 `authService.generateAccessToken` / `createRefreshToken` read `config.auth.accessToken.expiresIn` / `config.auth.refreshToken.expiresIn`, validate them, and throw naming the key if the value is not a positive `ms` duration — before anything is signed, persisted, or capped.
 
@@ -191,6 +191,6 @@ The package signs access and refresh tokens with independent secrets — `config
 
 ## See also
 
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — full login/logout flow that uses these primitives
-- [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) — the bundled cleanup command
-- [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md) — scheduling cleanup
+- The `handle-login-and-logout` topic — full login/logout flow that uses these primitives
+- The `run-auth-commands` topic — the bundled cleanup command
+- The `scheduler-basics` topic of the `warlock-js-scheduler` skill — scheduling cleanup

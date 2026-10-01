@@ -1,6 +1,6 @@
 ---
 name: run-auth-commands
-description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — `@warlock.js/auth/manage-tokens/SKILL.md`; in-process scheduling — `@warlock.js/scheduler/scheduler-basics/SKILL.md`; competing tools `dotenv-cli`, `node-cron`.'
+description: 'Three bundled CLI commands — warlock jwt.generate (creates strong JWT secret + writes to .env), warlock auth.cleanup (removes expired refresh tokens), and warlock auth.purge-never-expiring (finds and revokes token rows that can never expire). Register via registerJWTSecretGeneratorCommand(), registerAuthCleanupCommand() and registerAuthPurgeNeverExpiringCommand(). Triggers: `registerJWTSecretGeneratorCommand`, `registerAuthCleanupCommand`, `registerAuthPurgeNeverExpiringCommand`, `warlock jwt.generate`, `warlock auth.cleanup`, `warlock auth.purge-never-expiring`, `cleanupExpiredTokens`, `purgeNeverExpiringTokens`, `command`; "token never expires", "no exp claim", "Invalid Date expires_at"; "generate JWT secret", "bootstrap .env JWT_SECRET", "cron job for expired tokens", "schedule auth cleanup"; typical import `import { registerJWTSecretGeneratorCommand, registerAuthCleanupCommand, registerAuthPurgeNeverExpiringCommand } from "@warlock.js/auth"`. Skip: programmatic cleanup — the `manage-tokens` topic; in-process scheduling — the `scheduler-basics` topic of the `warlock-js-scheduler` skill; competing tools `dotenv-cli`, `node-cron`.'
 ---
 
 # Run auth commands
@@ -66,7 +66,7 @@ scheduler.addJob(
 scheduler.start();
 ```
 
-In-process — no shell call. See [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md).
+In-process — no shell call. See the `scheduler-basics` topic of the `warlock-js-scheduler` skill.
 
 ### Via system cron
 
@@ -155,5 +155,5 @@ Register it the same way as the bundled commands — call the factory inside `de
 
 ## See also
 
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — `cleanupExpiredTokens` internals
-- [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md) — in-process scheduling
+- The `manage-tokens` topic — `cleanupExpiredTokens` internals
+- The `scheduler-basics` topic of the `warlock-js-scheduler` skill — in-process scheduling

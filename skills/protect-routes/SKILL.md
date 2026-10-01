@@ -1,6 +1,6 @@
 ---
 name: protect-routes
-description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — `@warlock.js/auth/customize-user-type/SKILL.md`; issuing the token — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
+description: 'Gate HTTP routes via authMiddleware(allowedUserType) — the argument is required and a valid token is always required: [] allows any authenticated user, a user-type restricts to those types. Sets request.locals.user + request.decodedAccessToken on success, 401 on failure. Triggers: `authMiddleware`, `request.locals.user`, `request.decodedAccessToken`, `AuthErrorCodes`, `MissingAccessToken`, `InvalidAccessToken`; "how do I protect a route", "restrict route by user type", "require any logged-in user"; typical import `import { authMiddleware } from "@warlock.js/auth"`. Skip: multi-user-type config — the `customize-user-type` topic; issuing the token — the `handle-login-and-logout` topic; competing libs `passport`, `express-jwt`, `next-auth` middleware.'
 ---
 
 # Gate routes with `authMiddleware`
@@ -49,7 +49,7 @@ router.get("/staff", staffController, {
 });
 ```
 
-The `userType` slug must match a key in `config.auth.userType.<name>` — see [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md).
+The `userType` slug must match a key in `config.auth.userType.<name>` — see the `customize-user-type` topic.
 
 ## What the middleware does
 
@@ -172,7 +172,7 @@ The middleware uses the framework's `response.unauthorized({...})` shape. To ove
 
 That last one is the difference between a role check and an authorization model: without it, an account-creation endpoint gated on `authMiddleware("admin")` is a privilege-escalation path.
 
-Install [`@warlock.js/access`](@warlock.js/access/overview/SKILL.md) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
+Install `@warlock.js/access` (the `overview` topic of the `warlock-js-access` skill) for that. It layers RBAC plus per-permission ABAC policies over the same authenticated user:
 
 ```ts
 import { router, type RequestHandler } from "@warlock.js/core";
@@ -297,7 +297,7 @@ This is an Origin check, not a double-submit CSRF token — cheaper, and closes 
 
 ## See also
 
-- [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) — config and multi-user-type semantics
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — where the access token gets issued in the first place
-- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — brute-force throttle to stack in front of the login route
-- [`@warlock.js/access/overview/SKILL.md`](@warlock.js/access/overview/SKILL.md) — permissions, roles, and who-may-act-on-whom policies, when user-type gating isn't enough
+- The `customize-user-type` topic — config and multi-user-type semantics
+- The `handle-login-and-logout` topic — where the access token gets issued in the first place
+- The `throttle-login-attempts` topic — brute-force throttle to stack in front of the login route
+- The `overview` topic of the `warlock-js-access` skill — permissions, roles, and who-may-act-on-whom policies, when user-type gating isn't enough

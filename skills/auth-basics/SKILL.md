@@ -17,13 +17,13 @@ npm install @warlock.js/auth
 
 ## Foundations
 
-1. **Users extend `Auth`.** Your `User`, `Admin`, etc. extend the shared base model that knows how to issue tokens and verify passwords. Multiple user types coexist (see [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md)).
+1. **Users extend `Auth`.** Your `User`, `Admin`, etc. extend the shared base model that knows how to issue tokens and verify passwords. Multiple user types coexist (see the `customize-user-type` topic).
 2. **`auth.userType.<name>` config maps a user-type slug to the model class.** The middleware uses this to hydrate the right model from a token.
 3. **Tokens persist.** Both `AccessToken` and `RefreshToken` are Cascade models — issuing a token writes a row; logout / revoke deletes or marks-revoked. Stateless JWT verification + stateful revocation list.
 4. **`authMiddleware` gates or resolves routes.** Use `authMiddleware("user")` for a typed hard gate, `authMiddleware()` for the configured/default user type, or `authMiddleware({ source: "cookie", key: "token", optional: true })` for a public route that receives a valid user when present. The object form can set a page-local login redirect. Legacy `authMiddleware(userType, "cookie:name")` remains valid.
 5. **`authService.login(Model, credentials, deviceInfo?)` is the full happy path.** Verifies credentials, creates token pair (access + refresh), emits events, returns `{ user, tokens }`.
 6. **Refresh-token rotation is on by default.** Each refresh consumes the old token and issues new ones from the same "family" — replay detection revokes the family.
-7. **JWT secret lives in the env.** Generate with `warlock jwt.generate` (see [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md)).
+7. **JWT secret lives in the env.** Generate with `warlock jwt.generate` (see the `run-auth-commands` topic).
 
 ## Minimal wire-up
 
@@ -105,16 +105,16 @@ Two values that look right and are not:
 
 | If the task is about… | Load |
 | --- | --- |
-| Gating routes with `authMiddleware(allowedUserType)`, any-authenticated vs typed access | [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) |
-| `authService.login(...)`, `attemptLogin`, full credentials-to-tokens flow + logout | [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) |
-| Token lifecycle — `generateAccessToken`, `createRefreshToken`, rotation, family revocation, max-per-user | [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) |
-| Register a new user + issue tokens in one flow | [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) |
-| Multi-user-type apps (`user`, `admin`, `client`), `config.auth.userType.<name>` mapping | [`@warlock.js/auth/customize-user-type/SKILL.md`](@warlock.js/auth/customize-user-type/SKILL.md) |
-| `warlock jwt.generate` + `warlock auth.cleanup` CLI commands | [`@warlock.js/auth/run-auth-commands/SKILL.md`](@warlock.js/auth/run-auth-commands/SKILL.md) |
+| Gating routes with `authMiddleware(allowedUserType)`, any-authenticated vs typed access | The `protect-routes` topic |
+| `authService.login(...)`, `attemptLogin`, full credentials-to-tokens flow + logout | The `handle-login-and-logout` topic |
+| Token lifecycle — `generateAccessToken`, `createRefreshToken`, rotation, family revocation, max-per-user | The `manage-tokens` topic |
+| Register a new user + issue tokens in one flow | The `register-user` topic |
+| Multi-user-type apps (`user`, `admin`, `client`), `config.auth.userType.<name>` mapping | The `customize-user-type` topic |
+| `warlock jwt.generate` + `warlock auth.cleanup` CLI commands | The `run-auth-commands` topic |
 
 ## Things NOT to do
 
 - Don't write your own JWT signing logic — use `authService` / `jwt` from this package so signature/secret/expiry stay consistent.
 - Don't store the JWT secret in the model layer or anywhere user-modifiable. It lives in `.env` only.
-- Don't return the raw `User` from a login endpoint without shaping output. Configure `static toJsonColumns` or `static resource` (see [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md)).
-- Don't run `auth.cleanup` from app boot. Schedule it (cron, scheduler) as a periodic task — see [`@warlock.js/scheduler/scheduler-basics/SKILL.md`](@warlock.js/scheduler/scheduler-basics/SKILL.md).
+- Don't return the raw `User` from a login endpoint without shaping output. Configure `static toJsonColumns` or `static resource` (see the `define-model` topic of the `warlock-js-cascade` skill).
+- Don't run `auth.cleanup` from app boot. Schedule it (cron, scheduler) as a periodic task — see the `scheduler-basics` topic of the `warlock-js-scheduler` skill.

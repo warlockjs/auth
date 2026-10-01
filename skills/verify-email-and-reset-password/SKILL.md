@@ -1,6 +1,6 @@
 ---
 name: verify-email-and-reset-password
-description: 'Email verification and password reset with hashed, single-use, expiring, purpose-bound tokens delivered through `@warlock.js/notifications` — `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)`, `resetPassword(token, newPassword)`, the `requireVerifiedEmail()` guard, and the `tokenIssueThrottleMiddleware` / `tokenConsumeThrottleMiddleware` presets. Reset revokes every access token, refresh token and cookie session; a reset request answers the same for unknown emails. Triggers: `sendEmailVerification`, `verifyEmail`, `requestPasswordReset`, `resetPassword`, `requireVerifiedEmail`, `isEmailVerified`, `OneTimeToken`, `InvalidOneTimeTokenError`, `EmailNotVerifiedError`, `NotificationsUnavailableError`, `EC007`, `EC008`, `auth.verification`, `auth.passwordReset`; "verify email", "confirm email address", "forgot password", "reset password link", "block unverified users", "resend verification email"; typical import `import { requestPasswordReset, resetPassword } from "@warlock.js/auth"`. Skip: sign-up itself — `@warlock.js/auth/register-user/SKILL.md`; login throttling — `@warlock.js/auth/throttle-login-attempts/SKILL.md`; defining notifications — `@warlock.js/notifications/define-notification/SKILL.md`.'
+description: 'Email verification and password reset with hashed, single-use, expiring, purpose-bound tokens delivered through `@warlock.js/notifications` — `sendEmailVerification(user)`, `verifyEmail(token)`, `requestPasswordReset(Model, email)`, `resetPassword(token, newPassword)`, the `requireVerifiedEmail()` guard, and the `tokenIssueThrottleMiddleware` / `tokenConsumeThrottleMiddleware` presets. Reset revokes every access token, refresh token and cookie session; a reset request answers the same for unknown emails. Triggers: `sendEmailVerification`, `verifyEmail`, `requestPasswordReset`, `resetPassword`, `requireVerifiedEmail`, `isEmailVerified`, `OneTimeToken`, `InvalidOneTimeTokenError`, `EmailNotVerifiedError`, `NotificationsUnavailableError`, `EC007`, `EC008`, `auth.verification`, `auth.passwordReset`; "verify email", "confirm email address", "forgot password", "reset password link", "block unverified users", "resend verification email"; typical import `import { requestPasswordReset, resetPassword } from "@warlock.js/auth"`. Skip: sign-up itself — the `register-user` topic; login throttling — the `throttle-login-attempts` topic; defining notifications — the `define-notification` topic of the `warlock-js-notifications` skill.'
 ---
 
 # Verify email + reset password
@@ -132,6 +132,6 @@ The default notifications are `defineNotification` objects (`type: "auth.email-v
 
 ## See also
 
-- [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — where `sendEmailVerification` is usually called
-- [`@warlock.js/auth/throttle-login-attempts/SKILL.md`](@warlock.js/auth/throttle-login-attempts/SKILL.md) — the underlying throttle
-- [`@warlock.js/notifications/configure-notifications/SKILL.md`](@warlock.js/notifications/configure-notifications/SKILL.md) — mail channel setup
+- The `register-user` topic — where `sendEmailVerification` is usually called
+- The `throttle-login-attempts` topic — the underlying throttle
+- The `configure-notifications` topic of the `warlock-js-notifications` skill — mail channel setup

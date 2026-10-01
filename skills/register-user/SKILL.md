@@ -1,6 +1,6 @@
 ---
 name: register-user
-description: 'Sign up a new user and issue the initial token pair — User.create({...password: await hashPassword(plain)}) then authService.createTokenPair(user). Triggers: `User.create`, `hashPassword`, `verifyPassword`, `authService.createTokenPair`, `toJsonColumns`, `strongPassword`, `authEvents`; "build a register endpoint", "POST /register controller", "sign up a new user", "hash password on signup", "email verification flow"; typical import `import { authService } from "@warlock.js/auth"; import { hashPassword } from "@warlock.js/core"`. Skip: login — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; token internals — `@warlock.js/auth/manage-tokens/SKILL.md`; competing libs `bcrypt`, `bcryptjs`, `argon2`.'
+description: 'Sign up a new user and issue the initial token pair — User.create({...password: await hashPassword(plain)}) then authService.createTokenPair(user). Triggers: `User.create`, `hashPassword`, `verifyPassword`, `authService.createTokenPair`, `toJsonColumns`, `strongPassword`, `authEvents`; "build a register endpoint", "POST /register controller", "sign up a new user", "hash password on signup", "email verification flow"; typical import `import { authService } from "@warlock.js/auth"; import { hashPassword } from "@warlock.js/core"`. Skip: login — the `handle-login-and-logout` topic; token internals — the `manage-tokens` topic; competing libs `bcrypt`, `bcryptjs`, `argon2`.'
 ---
 
 # Register-and-issue-tokens flow
@@ -58,7 +58,7 @@ export const registerController: RequestHandler = async ({ request, response }) 
 };
 ```
 
-That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see [`@warlock.js/seal/handle-seal-errors/SKILL.md`](@warlock.js/seal/handle-seal-errors/SKILL.md) for catching validation failures.
+That's the whole flow. `User.create({...})` runs the schema validation (including `.email()`, `.min()`, etc. on each field), so you don't need a separate validation pass — see the `handle-seal-errors` topic of the `warlock-js-seal` skill for catching validation failures.
 
 ## Hash the password on the way in
 
@@ -114,7 +114,7 @@ const tokens = await authService.createTokenPair(user);
 return response.successCreate({ user, tokens });
 ```
 
-Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See [`@warlock.js/auth/verify-email-and-reset-password/SKILL.md`](@warlock.js/auth/verify-email-and-reset-password/SKILL.md).
+Gate routes that need a confirmed address with `requireVerifiedEmail()` after `authMiddleware`. See the `verify-email-and-reset-password` topic.
 
 ## Side effects via auth events
 
@@ -138,10 +138,10 @@ Cleaner alternative: emit your own `user.registered` event from the controller a
 - Don't pass the plain password to `User.create()`. `await hashPassword(plain)` first.
 - Don't return the user without `toJsonColumns` / `resource` shaping — the password hash will leak otherwise.
 - Don't issue tokens before validating the user shape. `User.create` runs validation; let it throw on bad input before tokens get created.
-- Don't run "send welcome email" inline in the controller. Push it to a queue or run it after-commit via the outbox pattern — see [`@warlock.js/cascade/manage-transactions/SKILL.md`](@warlock.js/cascade/manage-transactions/SKILL.md).
+- Don't run "send welcome email" inline in the controller. Push it to a queue or run it after-commit via the outbox pattern — see the `manage-transactions` topic of the `warlock-js-cascade` skill.
 
 ## See also
 
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — login flow (same `createTokenPair` step)
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token issuance internals
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — `toJsonColumns` / `resource` for public output
+- The `handle-login-and-logout` topic — login flow (same `createTokenPair` step)
+- The `manage-tokens` topic — token issuance internals
+- The `define-model` topic of the `warlock-js-cascade` skill — `toJsonColumns` / `resource` for public output

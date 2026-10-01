@@ -1,6 +1,6 @@
 ---
 name: handle-login-and-logout
-description: 'Run the full login flow via authService.login(Model, credentials, deviceInfo?) — verify password, create access + refresh token pair, fire events. Logout via authService.logout(user, accessToken?, refreshToken?) revokes tokens. Triggers: `authService.login`, `authService.logout`, `authService.attemptLogin`, `authService.refreshTokens`, `authService.revokeAllTokens`, `authEvents`; "build a login endpoint", "POST /login controller", "logout from all devices", "verify credentials and issue tokens"; typical import `import { authService, authEvents } from "@warlock.js/auth"`. Skip: token internals — `@warlock.js/auth/manage-tokens/SKILL.md`; sign-up — `@warlock.js/auth/register-user/SKILL.md`; competing libs `passport-local`, `next-auth` credentials.'
+description: 'Run the full login flow via authService.login(Model, credentials, deviceInfo?) — verify password, create access + refresh token pair, fire events. Logout via authService.logout(user, accessToken?, refreshToken?) revokes tokens. Triggers: `authService.login`, `authService.logout`, `authService.attemptLogin`, `authService.refreshTokens`, `authService.revokeAllTokens`, `authEvents`; "build a login endpoint", "POST /login controller", "logout from all devices", "verify credentials and issue tokens"; typical import `import { authService, authEvents } from "@warlock.js/auth"`. Skip: token internals — the `manage-tokens` topic; sign-up — the `register-user` topic; competing libs `passport-local`, `next-auth` credentials.'
 ---
 
 # Login + logout
@@ -152,7 +152,7 @@ export const refreshController: RequestHandler = async ({ request, response }) =
 };
 ```
 
-Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md).
+Returns a new token pair or `null` (token expired, revoked, or replay-detected). With rotation enabled (default), the old refresh token is consumed; the new pair stays in the same "family." Replay → revoke the whole family. See the `manage-tokens` topic.
 
 ## Auth events
 
@@ -189,9 +189,9 @@ Full event list: `login.attempt`, `login.success`, `login.failed`, `logout`, `lo
 
 ## See also
 
-- [`@warlock.js/auth/manage-tokens/SKILL.md`](@warlock.js/auth/manage-tokens/SKILL.md) — token lifecycle, rotation, family revocation
-- [`@warlock.js/auth/register-user/SKILL.md`](@warlock.js/auth/register-user/SKILL.md) — sign-up that issues tokens after creation
-- [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — where the access token gets consumed
+- The `manage-tokens` topic — token lifecycle, rotation, family revocation
+- The `register-user` topic — sign-up that issues tokens after creation
+- The `protect-routes` topic — where the access token gets consumed
 
 ## Browser sessions for Web pages
 

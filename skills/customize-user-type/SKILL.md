@@ -1,6 +1,6 @@
 ---
 name: customize-user-type
-description: 'Support multiple user types (user / admin / client / staff) in one auth system — each Auth subclass overrides userType, config.auth.userType.<slug> maps slug to model class, authMiddleware(''admin'') gates per type. Triggers: `Auth`, `userType`, `config.auth.userType`, `Authenticable`, `@RegisterModel`, `confirmPassword`; "add admins and users", "multiple user types", "separate client and vendor personas", "per-type login"; typical import `import { Auth } from "@warlock.js/auth"`. Skip: `authMiddleware` semantics — `@warlock.js/auth/protect-routes/SKILL.md`; login flow — `@warlock.js/auth/handle-login-and-logout/SKILL.md`; RBAC libs `casl`, `accesscontrol`, `rbac`.'
+description: 'Support multiple user types (user / admin / client / staff) in one auth system — each Auth subclass overrides userType, config.auth.userType.<slug> maps slug to model class, authMiddleware(''admin'') gates per type. Triggers: `Auth`, `userType`, `config.auth.userType`, `Authenticable`, `@RegisterModel`, `confirmPassword`; "add admins and users", "multiple user types", "separate client and vendor personas", "per-type login"; typical import `import { Auth } from "@warlock.js/auth"`. Skip: `authMiddleware` semantics — the `protect-routes` topic; login flow — the `handle-login-and-logout` topic; RBAC libs `casl`, `accesscontrol`, `rbac`.'
 ---
 
 # Customize user type (multi-user-type auth)
@@ -103,7 +103,7 @@ router.get("/back-office", backOfficeController, { middleware: [authMiddleware([
 router.get("/dashboard", dashboardController, { middleware: [authMiddleware([])] }); // any logged-in
 ```
 
-See [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md).
+See the `protect-routes` topic.
 
 ## Login per user type — pass the right Model
 
@@ -163,6 +163,6 @@ abstract class Auth<TSchema> extends Model<TSchema> implements Authenticable {
 
 ## See also
 
-- [`@warlock.js/auth/protect-routes/SKILL.md`](@warlock.js/auth/protect-routes/SKILL.md) — `authMiddleware` semantics
-- [`@warlock.js/auth/handle-login-and-logout/SKILL.md`](@warlock.js/auth/handle-login-and-logout/SKILL.md) — passing the right Model to `login`
-- [`@warlock.js/cascade/define-model/SKILL.md`](@warlock.js/cascade/define-model/SKILL.md) — `@RegisterModel`, models in general
+- The `protect-routes` topic — `authMiddleware` semantics
+- The `handle-login-and-logout` topic — passing the right Model to `login`
+- The `define-model` topic of the `warlock-js-cascade` skill — `@RegisterModel`, models in general
